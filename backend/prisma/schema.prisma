@@ -1,0 +1,502 @@
+// S1 scope: User, Chat, Message, AgentRun (columns + indexes only — no run
+// orchestration logic). See ../../.claude/specs/S1-chat-surface.md and
+// ../../.claude/specs/00-master-spec.md §6 for the governing domain model.
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String   @id @default(cuid())
+  clerkUserId   String   @unique
+  email         String?
+  // Starting balance/admission-hold amounts are env-configurable constants
+  // (CREDIT_STARTING_BALANCE, CREDIT_LLM_MIN_ADMISSION) — open question Q5
+  // (starting balance; 1:1 vs separate unit vs the reference implementation's
+  // credit unit) was never answered upstream. Stated assumption, not a
+  // silent one: 1:1 with the reference unit, seeded 100.0000. See
+  // .claude/specs/S2-streaming-turn.md and the S2 implementation plan §C.
+  creditBalance Decimal  @default(100.0000) @db.Decimal(12, 4)
+  creditHeld    Decimal  @default(0) @db.Decimal(12, 4)
+  createdAt     DateTime @default(now())
+
+  chats        Chat[]
+  creditLedger CreditLedger[]
+  creditHolds  CreditHold[]
+  attachments  Attachment[]
+
+  @@map("users")
+}
+
+enum MessageRole {
+  user
+  assistant
+  system
+  tool
+}
+
+enum MessageStatus {
+  streaming
+  complete
+  failed
+  cancelled
+}
+
+enum AgentRunStatus {
+  queued
+  running
+  waiting
+  completed
+  failed
+  cancelled
+}
+
+// Credit settlement — 00-master-spec.md §4. CreditHold is the refundable
+// admission reserved at send-time; CreditLedger is the append-only audit
+// source of truth (never updated/deleted).
+enum CreditHoldStatus {
+  OPEN
+  CAPTURED
+  RELEASED
+}
+
+enum CreditLedgerKind {
+  RESERVE
+  CAPTURE
+  RELEASE
+  USAGE
+}
+
+// Typed Tool Registry status. Mirrors a generic provider's
+// QUEUED|RUNNING|COMPLETED|FAILED plus two app-level states: DISPATCHING
+// (row written before the dispatch call — since the underlying provider has
+// no dispatch-side idempotency key, this row is the only durable record of
+// "did we already send this") and CANCELLED (app-level, mirrors AgentRun
+// cancellation cascading to a child tool).
+enum ToolInvocationStatus {
+  DISPATCHING
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// S7 — Transloadit generated-asset ingestion outcome for a ToolInvocation.
+// Null means the tool predates this feature or ingestion wasn't attempted.
+enum AssetIngestStatus {
+  PENDING
+  INGESTED
+  FAILED
+  SKIPPED
+}
+
+model Chat {
+  id        String    @id @default(cuid())
+  ownerId   String
+  owner     User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  title     String
+  pinnedAt  DateTime?
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  messages    Message[]
+  agentRuns   AgentRun[]
+  attachments Attachment[]
+
+  // Unfiltered/list cursor: newest-first with (createdAt, id) tie-break.
+  @@index([ownerId, deletedAt, createdAt, id])
+  // Pinned-filter cursor: same tie-break, scoped to pinned chats only.
+  @@index([ownerId, deletedAt, pinnedAt, createdAt, id])
+  @@map("chats")
+}
+
+model Message {
+  id        String        @id @default(cuid())
+  chatId    String
+  chat      Chat          @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  role      MessageRole
+  status    MessageStatus @default(complete)
+  // Validated (Zod), typed content-block array — text/thinking/tool_use/
+  // tool_result/reasoning/citation/usage — never a substitute for the
+  // relational fields above. See 00-master-spec.md §6 / §5.
+  content   Json
+  createdAt DateTime      @default(now())
+
+  // Back-relations for AgentRun's FK-enforced userMessageId/assistantMessageId
+  // (item 2 hardening pass — referential integrity at the DB level, not just
+  // app-level uniqueness). Named to disambiguate the two distinct 1:1 links.
+  runAsUserMessage      AgentRun?    @relation("AgentRunUserMessage")
+  runAsAssistantMessage AgentRun?    @relation("AgentRunAssistantMessage")
+  attachments           Attachment[]
+
+  // Assignment's explicit composite-index example: stable cursor pagination.
+  @@index([chatId, createdAt, id])
+  @@map("messages")
+}
+
+model AgentRun {
+  id             String         @id @default(cuid())
+  chatId         String
+  chat           Chat           @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  status         AgentRunStatus @default(queued)
+  idempotencyKey String         @unique
+
+  // Durable resume primitive (00-master-spec.md §6 / S2-streaming-turn.md).
+  // Index of the last durably-persisted streams.define() part; -1 means
+  // "no part persisted yet" so `startIndex: lastStreamIndex + 1` (the
+  // trigger.dev react-hooks contract — startIndex is inclusive, 0-based;
+  // verified against the installed @trigger.dev/react-hooks source) never
+  // skips part 0. See S2 implementation plan §B Contradiction 1.
+  lastStreamIndex Int @default(-1)
+
+  // Idempotency source for the send route (S2): the user Message this run
+  // was dispatched for. One run per user message, enforced at the DB level
+  // via both the unique index and the FK below (referential integrity, not
+  // just app-level uniqueness).
+  //
+  // Migration safety (hardening pass): this NOT NULL column was added by an
+  // ALTER TABLE against `agent_runs`, a table created by an earlier
+  // migration — normally unsafe against a populated table with no backfill
+  // value available (unlike `requestedModel` below, there is no sensible
+  // default for a pre-existing run's originating message). This is
+  // provably safe here, not just asserted: `agent_runs` has exactly one
+  // writer, `createTurn` (src/services/send-turn.ts), which always sets
+  // `userMessageId` atomically at row-creation time, and no code path
+  // existed to create an `agent_runs` row before this same migration
+  // shipped (verified: no `agentRun.create` call anywhere in the
+  // pre-S2/init schema or code) — so no row lacking this column can ever
+  // have existed for the migration to encounter.
+  userMessageId      String   @unique
+  userMessage        Message  @relation("AgentRunUserMessage", fields: [userMessageId], references: [id], onDelete: Cascade)
+  // The assistant Message this run streams into; null until the task
+  // creates it (first durable write).
+  assistantMessageId String?  @unique
+  assistantMessage   Message? @relation("AgentRunAssistantMessage", fields: [assistantMessageId], references: [id], onDelete: SetNull)
+  // Trigger.dev's own run id — set once the trigger call is confirmed to
+  // have been accepted. Null means "dispatch outcome unknown" (see the
+  // reconciler in persist.ts / services/runs.ts).
+  triggerRunId       String?  @unique
+
+  // Cancellation intent on an otherwise-`running` row. The assignment's
+  // `stopping` UI status is derived as `status === "running" &&
+  // cancelRequestedAt != null` — deliberately not a distinct enum value,
+  // see S2 implementation plan §B ("cancelling is derived").
+  cancelRequestedAt DateTime?
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  // Model-selection record (S2-streaming-turn.md "Model-selection
+  // validation"): what the client asked for vs. what openrouter/free
+  // actually routed to.
+  requestedModel String
+  resolvedModel  String?
+
+  // User-safe terminal-failure explanation (assignment §11
+  // "Diagnosability" — every failed turn must be explainable from the UI
+  // alone).
+  errorCode    String?
+  errorMessage String?
+
+  // Loop-iteration counter for the MAX_TURNS defensive cap.
+  turnCount Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  creditHold      CreditHold?
+  creditLedger    CreditLedger[]
+  toolInvocations ToolInvocation[]
+  runSkills       RunSkill[]
+  waitpoints      Waitpoint[]
+
+  // Partial unique index — at most one non-terminal run per chat. The
+  // predicate is injected verbatim into the DDL, so it must use the real
+  // database enum labels, not Prisma field names — verified against the
+  // generated migration SQL.
+  @@unique([chatId], where: raw("status IN ('queued','running','waiting')"), name: "agentrun_one_active_per_chat")
+  // Reconciler scan: non-terminal runs ordered/filtered by staleness.
+  @@index([status, updatedAt])
+  @@map("agent_runs")
+}
+
+// S6 (.claude/specs/S6-reliability-implementation-plan.md §6.2/§6.2a): a
+// durable human-in-the-loop pause point. Two kinds share one row shape and
+// one resume mechanism (Trigger.dev wait.createToken/forToken/completeToken):
+// CREDIT_APPROVAL (backend-deterministic, tool cost exceeds a threshold) and
+// CLARIFICATION (model-initiated via the ask_user tool — an ambiguous
+// request or a plan the model wants confirmed before acting). requestPayload/
+// resolvedPayload are kind-discriminated at the contract layer (Zod), not the
+// schema layer — Json here, validated shape enforced in
+// src/contracts/waitpoints.ts.
+model Waitpoint {
+  id             String          @id @default(cuid())
+  agentRunId     String
+  agentRun       AgentRun        @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
+  triggerTokenId String          @unique
+  kind           WaitpointKind
+  status         WaitpointStatus @default(PENDING)
+  requestPayload  Json
+  resolvedPayload Json?
+  expiresAt      DateTime
+  resolvedAt     DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  // Expiry sweep scan (S6 reconciler): pending waitpoints past expiresAt.
+  @@index([status, expiresAt])
+  @@map("waitpoints")
+}
+
+enum WaitpointKind {
+  CREDIT_APPROVAL
+  CLARIFICATION
+}
+
+enum WaitpointStatus {
+  PENDING
+  COMPLETED
+  EXPIRED
+}
+
+// Refundable admission reserved at send-time (00-master-spec.md §4).
+model CreditHold {
+  id         String           @id @default(cuid())
+  runId      String           @unique
+  run        AgentRun         @relation(fields: [runId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount     Decimal          @db.Decimal(12, 4)
+  status     CreditHoldStatus @default(OPEN)
+  createdAt  DateTime         @default(now())
+  resolvedAt DateTime?
+
+  // S3 (00-master-spec.md §4 amendment, 2026-08-20): sum of every CAPTURE
+  // against this hold so far. releaseHold releases `amount - capturedAmount`
+  // at finalize rather than the full amount — S2's LLM-only path always had
+  // capturedAmount 0, so this is additive, not a behavior change for S2.
+  capturedAmount Decimal @default(0) @db.Decimal(12, 4)
+
+  // Supports sweep.ts's sweepOrphanedHolds scan for OPEN holds (S7 plan
+  // §4.5/§7) — status alone is low-cardinality, so createdAt is included to
+  // keep the index selective and usable for ordering/batching.
+  @@index([status, createdAt])
+  @@map("credit_holds")
+}
+
+// Append-only audit source of truth (00-master-spec.md §4) — never updated
+// or deleted. Idempotency keys: reserve:{runId} / release:{runId} /
+// usage:{runId}:{turnIndex} (capture:{toolInvocationId} arrives with S3).
+model CreditLedger {
+  id               String           @id @default(cuid())
+  userId           String
+  // Append-only audit trail — must survive user deletion, never silently
+  // cascade away. Restrict (not Cascade/SetNull) so a user with ledger
+  // history cannot be hard-deleted without the audit trail being handled
+  // explicitly first (hardening pass — CodeRabbit finding).
+  user             User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  runId            String?
+  run              AgentRun?        @relation(fields: [runId], references: [id], onDelete: SetNull)
+  // S3: real FK, matching the append-only-audit posture of `run` above —
+  // SetNull (never Cascade) so a deleted ToolInvocation never silently
+  // deletes its own ledger history.
+  toolInvocationId String?
+  toolInvocation   ToolInvocation?  @relation(fields: [toolInvocationId], references: [id], onDelete: SetNull)
+  kind             CreditLedgerKind
+  amount           Decimal          @db.Decimal(12, 4)
+  idempotencyKey   String           @unique
+  // OpenRouter usage record (resolved model, prompt/completion tokens,
+  // generation id) — an extension of §4's shape kept in the metadata bag,
+  // not a change to it.
+  metadata         Json?
+  createdAt        DateTime         @default(now())
+
+  @@index([userId, createdAt])
+  @@map("credit_ledger")
+}
+
+// Application-level per-user send-rate limiting (S2-streaming-turn.md —
+// distinct from, and in addition to, OpenRouter's own upstream 429s). Fixed
+// window, single indexed table — no Redis/Upstash at this scale.
+model RateLimitWindow {
+  userId      String
+  windowStart DateTime
+  count       Int      @default(0)
+
+  @@unique([userId, windowStart])
+  @@map("rate_limit_windows")
+}
+
+// S3 — one row per model tool call the agent makes within a turn
+// (00-master-spec.md §6 ToolInvocation entity; assignment §"PostgreSQL &
+// Prisma Requirements" names ToolInvocation explicitly). `agentRunId` +
+// `toolCallId` is the duplicate-dispatch guard: OpenRouter's own
+// `tool_calls[].id` is unique per emitted call, so a retried loop iteration
+// that re-emits the same call id can never create a second row.
+model ToolInvocation {
+  id         String   @id @default(cuid())
+  agentRunId String
+  agentRun   AgentRun @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
+
+  // Which agent-loop re-entry emitted this call, and its order within that
+  // turn as the model emitted it — together give a deterministic replay
+  // order independent of dispatch/completion timing under parallel tool
+  // execution (assignment §7: "results, charges, and message ordering stay
+  // deterministic").
+  turnIndex Int
+  callIndex Int
+
+  toolCallId String // OpenRouter's tool_calls[].id for this call
+  name       String // registry key, e.g. "crop_image"
+  nodeType   String // the tool's registry name (tool.name), e.g. "crop_image" — kept as its own column/DTO field, distinct from the in-code MediaEngine ("sharp"/"cloudflare"/"ffmpeg")
+
+  // Sanitized, Zod-validated input snapshot — never an unsanitized
+  // pass-through of whatever the model emitted (00-master-spec.md §6).
+  input Json
+
+  status ToolInvocationStatus @default(DISPATCHING)
+
+  // Pre-dispatch estimate (sizes the incremental hold top-up, §4
+  // amendment) vs. creditUsed, what is actually captured — settles at the
+  // engine's own reported cost when it reports one, otherwise at this
+  // fixed estimate (00-master-spec.md §4 scenario 1; none of the three
+  // real in-process engines report their own cost today).
+  creditEstimate Decimal? @db.Decimal(12, 4)
+  creditUsed     Decimal? @db.Decimal(12, 4)
+
+  resultUrls Json? // string[] of generated-asset URLs, order preserved (post S7-ingestion/upload when it succeeds, else the raw source URLs)
+
+  // S7 — Transloadit generated-asset ingestion provenance/outcome.
+  sourceUrls        Json? // string[] of the original raw generated-asset URLs, kept as provenance even after resultUrls is overwritten with ingested URLs
+  // Only populated when there was exactly one source URL to ingest — with
+  // multiple URLs there are multiple Assemblies per invocation, and storing
+  // just the last one would misleadingly imply a single Assembly covers
+  // them all, so this is left null and callers rely on sourceUrls/resultUrls instead.
+  assemblyId        String?
+  assetIngestStatus AssetIngestStatus?
+
+  // User-safe only — never the raw engine/provider error string
+  // (mirrors src/server/openrouter/errors.ts's existing rule).
+  errorCode    String?
+  errorMessage String?
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+  durationMs Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  creditLedger CreditLedger[]
+
+  // Duplicate-dispatch guard: at most one row per (run, model tool-call id).
+  @@unique([agentRunId, toolCallId])
+  // S6's periodic reconciliation sweep scans for stuck DISPATCHING/RUNNING
+  // rows past a staleness threshold — same shape as AgentRun's own
+  // [status, updatedAt] index.
+  @@index([status, updatedAt])
+  @@map("tool_invocations")
+}
+
+// S5 — app-owned skill content resolved and recorded for a run at load
+// time (00-master-spec.md / S5-skills.md). `content` (not just
+// `contentHash`) is persisted so a retried/resumed run reuses the exact
+// recorded skill content rather than re-resolving from disk, which may
+// have changed since — comparing a hash alone would require re-reading
+// the very file that may have changed. Bounded by the same 32KB cap
+// already enforced on SKILL.md at registry-load time.
+model RunSkill {
+  id          String   @id @default(cuid())
+  agentRunId  String
+  agentRun    AgentRun @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
+  skillName   String
+  contentHash String
+  content     String   @db.Text
+  createdAt   DateTime @default(now())
+
+  @@unique([agentRunId, skillName])
+  @@map("run_skills")
+}
+
+// S4 — user-uploaded attachment (00-master-spec.md §6: "Attachment — FK to
+// Chat and to the Message it's attached to (nullable until send commits);
+// Transloadit assembly id; sanitized file metadata; result URL(s); ordering
+// index preserved from upload order"). Distinct from ToolInvocation's
+// resultUrls/sourceUrls, which are *generated* assets (S3/S7) — this table
+// is exclusively user-supplied direct uploads. Unbound rows (messageId:
+// null, status READY) are, by definition, the user's asset library
+// (open-questions.md "S4/asset gaps with no current owner" — no separate
+// Library/Asset entity, per the S4 implementation plan).
+enum AttachmentStatus {
+  PENDING
+  READY
+  FAILED
+  CANCELLED
+}
+
+model Attachment {
+  id     String @id @default(cuid())
+  // Nullable until the first send — attaching a file before any chat exists
+  // (the empty-state composer) must not force-create a real Chat row just
+  // to satisfy this FK. Bound to the chat (alongside messageId) atomically
+  // in bindAttachmentsToMessage, once one exists.
+  chatId String?
+  chat   Chat?   @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  // Direct owner FK (not just via chatId) per §6's cross-cutting rule: every
+  // ownership-sensitive table carries an owner FK so authorization checks
+  // never require a second lookup that could leak existence via timing —
+  // unauthorized access returns the same non-leaking 404 as every other route.
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  // Nullable until the message that sends it is created (mirrors
+  // AgentRun.assistantMessageId's SetNull pattern) — an attachment can exist
+  // unbound (uploaded, not yet sent; or a library asset) for arbitrarily long.
+  messageId String?
+  message   Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  // Upload order, independent of createdAt (assignment: "preserve
+  // direct-upload and media-library attachment order").
+  orderIndex Int
+
+  status AttachmentStatus @default(PENDING)
+
+  // One Assembly per direct-upload file (unlike S7 ingestion where a
+  // multi-URL tool result fans out to multiple Assemblies) — always unique.
+  assemblyId String? @unique
+
+  mimeType String?
+  // Byte size in the low hundreds of MB at most (0.5GB per-file cap) — fits
+  // comfortably in Int32; also the input to the monthly-quota aggregate
+  // query (S4 implementation plan §4).
+  byteSize Int?
+  fileName String?
+
+  // Public, durable URL once the Assembly completes — same
+  // /cloudflare/store + url_prefix pattern already proven live by S7
+  // ingestion (verified end-to-end 2026-08-21).
+  resultUrl String?
+
+  // User-safe only — never the raw Transloadit error string (mirrors
+  // ToolInvocation.errorMessage's existing rule).
+  errorCode    String?
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Ordered read for a bound message's attachment strip.
+  @@index([chatId, messageId, orderIndex])
+  // Owner's unbound rows = media library, newest-first; also the monthly
+  // quota aggregate's scan shape.
+  @@index([ownerId, createdAt, id])
+  @@map("attachments")
+}
