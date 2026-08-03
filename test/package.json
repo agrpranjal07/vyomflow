@@ -1,0 +1,32 @@
+{
+  "name": "vyomflow-tests",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Centralized, local-only testing workspace. Never committed to either app repo — see ../.claude/rules/testing-policy.md.",
+  "scripts": {
+    "pretest:integration": "tsx scripts/migrate-test-db.ts",
+    "test:integration": "dotenv -e .env.local -- vitest run --config vitest.integration.config.mts",
+    "test:unit": "vitest run --config vitest.config.mts",
+    "test:frontend": "vitest run --config vitest.frontend.config.mts"
+  },
+  "devDependencies": {
+    "@tanstack/react-query": "^5.101.4",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.5",
+    "@vitejs/plugin-react": "^6.0.5",
+    "dotenv": "^17.4.2",
+    "dotenv-cli": "^11.0.0",
+    "jsdom": "^25.0.1",
+    "lucide-react": "1.32.0",
+    "msw": "^2.15.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tsx": "^4.23.12",
+    "typescript": "^5",
+    "vite-tsconfig-paths": "^6.1.1",
+    "vitest": "^4.1.11"
+  },
+  "packageManager": "pnpm@9.15.9"
+}
