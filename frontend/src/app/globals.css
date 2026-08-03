@@ -1,0 +1,330 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@plugin "@tailwindcss/typography";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  /* Fidelity-critical radius scale — exact literals, measured
+     (S-fidelity-ui.md §2.3). Single authoritative source per
+     ui-architecture-policy.md; no component should hardcode rounded-[Npx]
+     for these values. */
+  --radius-sm: 10px; /* sidebar nav row */
+  --radius-md: 16px; /* user message bubble */
+  --radius-lg: 24px; /* composer outer container */
+  --radius-pill: 999px; /* attach/connect/dictation/send buttons */
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-error: var(--text-error);
+  --color-text-warning: var(--text-warning);
+  --color-text-information: var(--text-information);
+  --color-text-success: var(--text-success);
+  --color-border-success: var(--border-success);
+  --color-surface-success-bg: var(--surface-success-bg);
+  --color-credit-cta-fg: var(--credit-cta-fg);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-action-primary-bg: var(--action-primary-bg);
+  --color-action-primary-fg: var(--action-primary-fg);
+  --color-action-primary-bg-disabled: var(--action-primary-bg-disabled);
+  --color-action-primary-fg-disabled: var(--action-primary-fg-disabled);
+  --color-bubble-user-bg: var(--bubble-user-bg);
+  --color-bubble-user-fg: var(--bubble-user-fg);
+  --color-border-secondary: var(--border-secondary);
+  --color-surface-dark: var(--surface-dark);
+  --color-surface-inset: var(--surface-inset);
+  --color-surface-thumbnail: var(--surface-thumbnail);
+  --color-border-hairline: var(--border-hairline);
+}
+
+:root {
+  /* Radius scale republished on :root (not just @theme inline) so runtime
+     var() lookups (rounded-[var(--radius-*)]) resolve to these exact
+     measured values instead of Tailwind v4's own :root defaults —
+     S-fidelity-ui.md §2.3 / audit finding #2. @theme inline still owns the
+     generated-utility values; this is the single additional publish point. */
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-pill: 999px;
+
+  /* Measured reference tokens — S-fidelity-ui.md §2.2/§2.10. Single
+     authoritative source per ui-architecture-policy.md. */
+  --background: #ffffff;
+  --foreground: #1b1b1b;
+  --card: #ffffff;
+  --card-foreground: #1b1b1b;
+  --popover: #ffffff;
+  --popover-foreground: #1b1b1b;
+  --primary: #007db9;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f4;
+  --secondary-foreground: #1b1b1b;
+  --muted: #f5f5f5;
+  --muted-foreground: #585858;
+  --accent: #f5f5f5;
+  --accent-foreground: #1b1b1b;
+  --destructive: #dc2626;
+  --border: #bdbdbd;
+  /* Structural hairlines (sidebar rail, list dividers) are one tier lighter
+     than the input/composer-ring border — S-fidelity-ui.md §2.10
+     (--boarder-secondary). Keep --border as-is for input/focus-ring use. */
+  --border-secondary: #dedede;
+  --input: #bdbdbd;
+  --ring: #007db9;
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+
+  /* Text — S-fidelity-ui.md §2.2/§2.10 */
+  --text-primary: #1b1b1b;
+  --text-secondary: #585858;
+  /* Chat-list page-variant timestamp/pin icon — measured, one tier lighter
+     than --text-secondary; distinct from it, so its own tier per
+     ui-architecture-policy.md rather than a near-miss reuse. */
+  --text-tertiary: #777777;
+  --text-error: #dc2626;
+  --text-warning: #c47e09;
+  --text-information: #0b62f1;
+
+  /* Sidebar Add Credits CTA gradient — measured live, S7 audit 2026-08-21.
+     Identical in light and dark (the reference never re-themes this
+     button), so defined once here rather than duplicated in .dark. */
+  --credit-cta-gradient-from: #3b3b3b;
+  --credit-cta-gradient-to: #2b2b2b;
+  --credit-cta-fg: #f7f7f7;
+  /* Measured live, S7 sidebar-credit-block audit 2026-08-21 (superseding the
+     prior "not reference-measured" guess — the guessed value happened to
+     match the light-mode reading exactly). Sidebar's green "+15M credits on
+     <date>" pill: text/border/bg. */
+  --text-success: #16a34a;
+  --border-success: #16a34a;
+  --surface-success-bg: #d0edda;
+
+  /* Primary action (send button enabled, "New task" pill) — measured */
+  --action-primary-bg: #007db9;
+  --action-primary-fg: #ffffff;
+  --action-primary-bg-disabled: #fafafa;
+  --action-primary-fg-disabled: #585858;
+
+  /* User message bubble — measured */
+  --bubble-user-bg: #f4f4f4;
+  --bubble-user-fg: #1b1b1b;
+
+  /* Media-library/attach-menu surface tier — measured
+     (reference-media-library-desktop.md), reused across attach-button,
+     media-library-view, square-checkbox. Distinct from the app's
+     primary/secondary/muted tiers, so a dedicated tier per
+     ui-architecture-policy.md rather than a near-miss reuse. */
+  --surface-dark: #171717; /* Upload/Add-to-Chat CTA bg, checked checkbox */
+  --surface-inset: #f7f7f7; /* inset search/panel background */
+  --surface-thumbnail: #f1f1f1; /* card/thumbnail/hover tint */
+  --border-hairline: #ededed; /* light divider/panel border */
+
+  /* Application-level layout tokens — the single authoritative source for
+     these dimensions. Change here, not per-component, per
+     ui-architecture-policy.md. */
+  --layout-sidebar-width: 240px; /* measured, S-fidelity-ui.md §2.4 */
+  --layout-sidebar-rail-width: 48px; /* collapsed rail icon column, measured */
+  --layout-header-height: 56px;
+  --layout-chat-content-width: 900px; /* assistant text container max-width, measured */
+  --layout-message-max-width: 448px; /* user-message bubble max-width, measured */
+  --layout-sidebar-row-height: 34px; /* New Task row / chat-list-item row height */
+  --layout-control-height-sm: 26px; /* model-selector trigger, screenshot-derived (audit finding #13) */
+
+  /* Brand asset render dimensions — S-fidelity-ui.md §2.8 */
+  --brand-logo-width: 80px;
+  --brand-logo-height: 20px;
+
+  --sidebar: #fafafa;
+  --sidebar-foreground: #1b1b1b;
+  --sidebar-primary: #2b2b2b;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f5f5f5;
+  --sidebar-accent-foreground: #1b1b1b;
+  --sidebar-border: #bdbdbd;
+  --sidebar-ring: #007db9;
+}
+
+.dark {
+  --background: #111111;
+  /* Sidebar/foundation-raised surface one step off canvas — inferred by
+     analogy with light mode, not directly screenshot-verified.
+     S-fidelity-ui.md §2.10 "Open note". */
+  --card: #1a1a1a;
+  --card-foreground: #f1f1f1;
+  --popover: #1a1a1a;
+  --popover-foreground: #f1f1f1;
+  --foreground: #f1f1f1;
+  /* Dark accent button: not separately measured for this element in dark
+     mode — using the foundation-raised token pair as a reasonable inverse
+     (S-fidelity-ui.md §2.10 primary/secondary foundation values). */
+  --primary: #59b7e4;
+  --primary-foreground: #111111;
+  --secondary: #1b1b1b;
+  --secondary-foreground: #f1f1f1;
+  --muted: #1a1a1a;
+  --muted-foreground: #9a9a9a;
+  --accent: #1a1a1a;
+  --accent-foreground: #f1f1f1;
+  --destructive: #dc2626;
+  --border: #a9a9a9;
+  --border-secondary: #222222;
+  --input: #a9a9a9;
+  --ring: #59b7e4;
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+
+  --text-primary: #f1f1f1;
+  --text-secondary: #9a9a9a;
+  --text-tertiary: #9a9a9a;
+  --text-error: #dc2626;
+  --text-warning: #f7b13c;
+  --text-information: #3c81f4;
+  /* Corrected by live measurement, S7 audit 2026-08-21 — the previous
+     #16a34a here was light-mode's value reused "by analogy, not
+     reference-measured" (see the original comment this replaced). The
+     reference actually renders a distinct, lighter green in dark mode. */
+  --text-success: #45b56e;
+  --border-success: #a2dab7;
+  --surface-success-bg: #09411e;
+
+  /* Dark primary action: not separately measured — derived from the
+     foundation-primary-top/bottom tokens (#3b3b3b/#2b2b2b) as a raised dark
+     surface with light foreground; see S-fidelity-ui.md §2.10 note. */
+  --action-primary-bg: #59b7e4;
+  --action-primary-fg: #111111;
+  --action-primary-bg-disabled: #1a1a1a;
+  --action-primary-fg-disabled: #9a9a9a;
+
+  /* User bubble in dark mode: inferred raised-but-distinct surface, not
+     directly measured for this element — S-fidelity-ui.md §2.10. */
+  --bubble-user-bg: #1b1b1b;
+  --bubble-user-fg: #f1f1f1;
+
+  /* #111111 — measured from a real reference screenshot pixel sample
+     (rgb(17,17,17) at multiple sidebar-body points), superseding the prior
+     by-analogy #1a1a1a guess. See S-fidelity-ui.md §2.10. */
+  --sidebar: #111111;
+  --sidebar-foreground: #f1f1f1;
+  --sidebar-primary: #f1f1f1;
+  --sidebar-primary-foreground: #2b2b2b;
+  --sidebar-accent: #111111;
+  --sidebar-accent-foreground: #f1f1f1;
+  --sidebar-border: #a9a9a9;
+  --sidebar-ring: #59b7e4;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    /* Base type scale measured, S-fidelity-ui.md §2.1: 14px/20px, not the
+       16px/24px browser default. */
+    @apply bg-background text-foreground text-sm leading-5;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/* Composer border + focus ring — single authoritative source per
+   ui-architecture-policy.md, consumed by composer.tsx via the
+   `group/composer` marker class (no `bg-muted`/border utility there — both
+   live here so the two states share one definition).
+   Reference (live screenshot, unfocused vs. focused) shows a subtle
+   gradient hairline border present even at rest, not just on focus — the
+   prior version had no border at all until :focus-within. Two-layer
+   background trick (solid fill clipped to padding-box, gradient clipped to
+   border-box) since a plain `border` can't itself be a gradient. */
+.group\/composer {
+  border: 1px solid transparent;
+  background-image:
+    linear-gradient(var(--muted), var(--muted)),
+    linear-gradient(135deg, var(--border-secondary), var(--border));
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+}
+
+/* Applied directly as :focus-within on the composer container — Tailwind
+   does not generate a focus-within: variant of a hand-authored class name
+   (audit finding #3), so the state selector is authored here instead of via
+   a `focus-within:` utility prefix in composer.tsx. */
+.group\/composer:focus-within {
+  box-shadow:
+    inset 0 0 0 1px var(--border),
+    0 0 0 3px rgb(24 24 24 / 6%);
+}
+
+.dark .group\/composer:focus-within {
+  /* No outer ring layer in dark mode — reference's own light/dark
+     asymmetry, see composer.md evidence. */
+  box-shadow: inset 0 0 0 0.5px var(--border);
+}
+
+/* Thin native scrollbar (Firefox: scrollbar-width; WebKit: styled track/thumb)
+   — reference measured thumb color and track. Single authoritative source
+   per ui-architecture-policy.md; applied via the `scrollbar-thin` class. */
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 9999px;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background-color: var(--border-secondary, var(--border));
+  }
+}
+
