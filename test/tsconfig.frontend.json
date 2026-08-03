@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      // Same alias name frontend's own source uses internally — see
+      // ../frontend/tsconfig.json and the identical rationale in
+      // tsconfig.json (backend side).
+      "@/*": ["../frontend/src/*"]
+    }
+  },
+  "include": ["frontend/**/*.ts", "frontend/**/*.tsx"],
+  "exclude": ["node_modules"]
+}

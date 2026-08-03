@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["esnext"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      // Same alias name backend's own source uses internally (see
+      // ../backend/tsconfig.json). Replicating it here — rather than
+      // inventing a different prefix — means files under backend/src that
+      // themselves import "@/..." (e.g. a Route Handler importing
+      // "@/lib/auth") resolve correctly when loaded from this project too,
+      // with zero import rewriting in the moved test files.
+      "@/*": ["../backend/src/*"]
+    }
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules"]
+}

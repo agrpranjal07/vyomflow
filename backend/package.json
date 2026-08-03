@@ -1,0 +1,45 @@
+{
+  "name": "backend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "postinstall": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "contracts:sync": "tsx scripts/contracts-sync.ts",
+    "docs:openapi": "tsx scripts/generate-openapi.ts"
+  },
+  "dependencies": {
+    "@clerk/backend": "^3.16.8",
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
+    "@trigger.dev/sdk": "^4.5.11",
+    "gray-matter": "^4.0.3",
+    "next": "16.3.1",
+    "pg": "^8.23.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "sharp": "^0.35.3",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@asteasolutions/zod-to-openapi": "^9.1.0",
+    "@trigger.dev/build": "^4.5.11",
+    "@trigger.dev/core": "4.5.11",
+    "@types/node": "^20",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "dotenv": "^17.4.2",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.1",
+    "prisma": "^7.9.1",
+    "tsx": "^4.23.12",
+    "typescript": "^5"
+  },
+  "packageManager": "pnpm@9.15.9"
+}
