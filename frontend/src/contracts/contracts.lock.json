@@ -1,0 +1,14 @@
+{
+  "sourceSha": "0f5444fa8bbe10c41e18f0fbcc89a4c3d6dd047a",
+  "files": {
+    "attachments.ts": "9edeec958d39f6f6ca527567beeee13d933f8f837af1118d3874a5ed2b5adfa7",
+    "chats.ts": "e51bbb10f42d008a81adc9c08b5793e1540f198c1cf841d6ac26f50c25e18d67",
+    "common.ts": "217ae7c53d6af38700c338cddb17177ce733a278216c2e521e934dcb5f9cff8b",
+    "credits.ts": "2998c989299b170171d96d7143bcdbddc00a8550d8e0f4218d96e6a24eefd774",
+    "messages.ts": "3b795e05149f556f2478b0be905cc3fd1e8f3893d25ea1e1667aa27887d9f7ed",
+    "runs.ts": "b43b22a33af23cc561ebec87e5cb308eabe32560a4b35832ee8aafb3e0aff952",
+    "skills.ts": "34981a78ef38aa361994ef662063499e78442c06ad7417e7a569ecff1073cbd2",
+    "tools.ts": "cb6cd0c8344a071642744f1e2a51e0cda54b6a561b87f906b2d00e4867f367a6",
+    "waitpoints.ts": "32169b67f99de76fd8582a7ee4a3fb615e3ce1d4ed06580e864d90cc0035dcc8"
+  }
+}
