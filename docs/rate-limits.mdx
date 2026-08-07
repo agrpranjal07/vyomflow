@@ -1,0 +1,37 @@
+---
+title: "Rate Limits for the VyomFlow API"
+description: "The VyomFlow API enforces per-user send-rate limits on message submission to protect shared provider budgets."
+sidebarTitle: "Rate Limits"
+---
+
+Message submission in the VyomFlow API is rate-limited per authenticated user on a fixed time window. When you exceed the limit, the API returns `429 RATE_LIMITED` immediately without consuming provider quota or credits.
+
+## How it works
+
+The limit is enforced before any provider call. A rate-limited request never reaches the LLM, never triggers a tool call, and never reserves or spends credits. This protects shared provider budgets from accidental or runaway client loops.
+
+If you are rate limited, the response body follows the standard [error envelope](/errors):
+
+```json
+{
+  "error": {
+    "code": "RATE_LIMITED",
+    "message": "Rate limit exceeded.",
+    "details": null
+  }
+}
+```
+
+## Upstream limits
+
+The underlying LLM route (OpenRouter free tier) has its own daily and per-minute caps. These are separate from the application-level rate limit and may also produce errors. If you see a provider-level rejection after passing the application gate, treat it as an upstream quota issue and retry later.
+
+## Best practices
+
+- Implement exponential backoff with jitter when you receive a `429`.
+- Surface the error to the user with a friendly message instead of silently retrying.
+- Do not auto-retry immediately; the window is fixed and short retries are unlikely to succeed.
+
+<Tip>
+  A 429 response means your request was rejected before reaching the LLM. No credits were consumed.
+</Tip>

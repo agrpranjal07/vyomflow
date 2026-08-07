@@ -1,0 +1,68 @@
+---
+title: "Waitpoints: Pause a Run for Human Input"
+sidebarTitle: "Waitpoints"
+description: "Waitpoints let a running agent pause and wait for external input before continuing. Learn how to detect and respond to waitpoints."
+---
+
+During a [run](/concepts/runs), the agent may emit a waitpoint when it needs a human response before continuing. This is useful for approval flows, clarifying questions, or any scenario where the agent cannot proceed autonomously.
+
+## When waitpoints appear
+
+The realtime stream emits a waitpoint event that contains a `waitpointId` and a prompt or question. While the waitpoint is open, the run stays in a waiting state. The run resumes only after you respond to the waitpoint or cancel the run.
+
+If you are listening to the realtime stream, watch for an event with the waitpoint details so you can surface the prompt to the user.
+
+## Responding to a waitpoint
+
+Send your response to the waitpoint with a single POST call. The run resumes automatically once the API receives it.
+
+### Endpoint
+
+```text
+POST /api/v1/waitpoints/{waitpointId}/respond
+```
+
+### Request body
+
+```json
+{
+  "response": "Yes, proceed with that plan."
+}
+```
+
+### Examples
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST http://localhost:3000/api/v1/waitpoints/wp_abc123/respond \
+  -H "Authorization: Bearer <clerk-session-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"response": "Yes, proceed with that plan."}'
+```
+
+```js JavaScript
+const res = await fetch(
+  'http://localhost:3000/api/v1/waitpoints/wp_abc123/respond',
+  {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer <clerk-session-token>',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ response: 'Yes, proceed with that plan.' }),
+  }
+);
+const data = await res.json();
+```
+
+</CodeGroup>
+
+<Note>
+  A waitpoint is owned by the same user as its parent run. If you try to respond with a different user's token, the API returns `404 Not Found` instead of `403 Forbidden`.
+</Note>
+
+## Next steps
+
+- Learn how runs work and how to cancel one in [Runs](/concepts/runs)
+- Review the [Errors](/errors) page for response codes you may see when responding to a waitpoint

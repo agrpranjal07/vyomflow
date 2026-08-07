@@ -1,0 +1,46 @@
+---
+title: "Authenticate Requests to the VyomFlow API"
+description: "Every VyomFlow API request requires a Clerk session bearer token passed in the Authorization header."
+sidebarTitle: "Authentication"
+---
+
+The VyomFlow API uses Clerk session tokens for authentication. There is no API key or OAuth layer. Every request must include a valid Clerk bearer token in the Authorization header.
+
+## Getting a token
+
+Tokens are obtained from the frontend Clerk SDK. Use your Clerk session object to retrieve a fresh token before each request.
+
+```javascript
+const token = await session.getToken();
+```
+
+## Sending the token
+
+Include the token in the `Authorization` header using the Bearer scheme.
+
+```text
+Authorization: Bearer <clerk-session-token>
+```
+
+Here is a curl example that shows how to send an authenticated request:
+
+```bash
+curl -H "Authorization: Bearer <clerk-session-token>" \
+  http://localhost:3000/api/v1/chats
+```
+
+## How the backend uses it
+
+The backend verifies the token against Clerk. On first sight, it provisions a User row keyed on your Clerk user id. There is no separate signup or login endpoint.
+
+<Note>
+  There is no separate signup or login endpoint. Your Clerk session token is all you need.
+</Note>
+
+## Ownership and access control
+
+Every resource — chats, messages, runs, attachments, and waitpoints — is scoped to the authenticated caller. If you request a resource owned by another user, the API returns `404 NOT_FOUND`. It never returns `403` or confirms that the resource exists.
+
+<Tip>
+  Token expired? Call `session.getToken()` again before retrying — Clerk tokens are short-lived.
+</Tip>

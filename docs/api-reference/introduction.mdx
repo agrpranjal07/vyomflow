@@ -1,0 +1,59 @@
+---
+title: "VyomFlow API Reference Overview"
+sidebarTitle: "Overview"
+description: "Base URL, authentication, versioning, and common patterns for the VyomFlow REST API."
+---
+
+This section documents all public REST endpoints for the VyomFlow API. Every endpoint returns JSON and uses the same authentication, versioning, and error conventions described here.
+
+## Base URL
+
+The API base URL is configurable at deployment time. The default is:
+
+```text
+http://localhost:3000
+```
+
+All paths are prefixed with `/api/v1`. For example, the full URL to list chats is:
+
+```text
+GET http://localhost:3000/api/v1/chats
+```
+
+## Authentication
+
+Every endpoint requires an `Authorization` header with a Clerk session token:
+
+```text
+Authorization: Bearer <clerk-session-token>
+```
+
+If the token is missing or invalid, the API returns `401 UNAUTHORIZED`. See the [Authentication](/authentication) page for how to obtain and refresh tokens.
+
+## Versioning
+
+The current API version is **v1**. All endpoints live under `/api/v1`. Future versions will be introduced under a new path prefix with a migration window.
+
+## Resource groups
+
+<CardGroup cols={2}>
+  <Card title="Chats" icon="comments" href="/api-reference/introduction">
+    Create, list, update, and delete chat sessions.
+  </Card>
+
+  <Card title="Runs" icon="play" href="/api-reference/introduction">
+    Start, cancel, and monitor agent runs within a chat.
+  </Card>
+
+  <Card title="Waitpoints" icon="pause" href="/api-reference/introduction">
+    Respond to agent waitpoints that pause a turn for user input.
+  </Card>
+
+  <Card title="Attachments" icon="paperclip" href="/api-reference/introduction">
+    Upload and complete file attachments for messages.
+  </Card>
+</CardGroup>
+
+## Errors and rate limits
+
+All endpoints return the same [error envelope](/errors) and are subject to per-user [rate limits](/rate-limits). Review those pages before building retry logic.

@@ -1,0 +1,136 @@
+---
+title: "Get Started with VyomFlow API"
+sidebarTitle: "Quickstart"
+description: "Make your first VyomFlow API request in under 5 minutes: create a chat, send a message, and stream the agent response."
+---
+
+Before you begin, make sure you have a running VyomFlow backend and a valid Clerk session token. The backend defaults to `http://localhost:3000`, and every request must include an `Authorization: Bearer <token>` header.
+
+<Steps>
+  <Step title="Get your Clerk session token">
+    Your frontend authenticates users with Clerk. Retrieve the current session token from the Clerk JS SDK so you can include it in API requests:
+
+    ```javascript
+    const token = await session.getToken();
+    ```
+
+    Pass this token as a Bearer token in the `Authorization` header on every call.
+  </Step>
+  <Step title="Create a chat">
+    Start by creating a new chat session. Send a `POST` request to `/api/v1/chats` with your Clerk token.
+
+    <CodeGroup>
+
+    ```bash curl
+    curl -X POST http://localhost:3000/api/v1/chats \
+      -H "Authorization: Bearer <clerk-session-token>" \
+      -H "Content-Type: application/json"
+    ```
+
+    ```javascript JavaScript
+    const res = await fetch("http://localhost:3000/api/v1/chats", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    });
+    const chat = await res.json();
+    console.log(chat);
+    ```
+
+    </CodeGroup>
+
+    Example response:
+
+    ```json
+    {
+      "id": "chat_01JXYZ1234567890ABCDEF",
+      "title": "New chat",
+      "createdAt": "2025-01-15T10:00:00.000Z",
+      "updatedAt": "2025-01-15T10:00:00.000Z",
+      "pinnedAt": null
+    }
+    ```
+
+    Save the `id` value. You will use it in the next step.
+  </Step>
+  <Step title="Send a message">
+    Post a message to the chat you just created. The request body needs a `content` field with the text you want to send.
+
+    <CodeGroup>
+
+    ```bash curl
+    curl -X POST http://localhost:3000/api/v1/chats/chat_01JXYZ1234567890ABCDEF/messages \
+      -H "Authorization: Bearer <clerk-session-token>" \
+      -H "Content-Type: application/json" \
+      -d '{"content": "Hello, agent!"}'
+    ```
+
+    ```javascript JavaScript
+    const messageRes = await fetch(
+      `http://localhost:3000/api/v1/chats/${chat.id}/messages`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ content: "Hello, agent!" }),
+      }
+    );
+    const message = await messageRes.json();
+    console.log(message);
+    ```
+
+    </CodeGroup>
+
+    Example response:
+
+    ```json
+    {
+      "id": "msg_01JXYZ0987654321FEDCBA",
+      "chatId": "chat_01JXYZ1234567890ABCDEF",
+      "content": "Hello, agent!",
+      "role": "user",
+      "createdAt": "2025-01-15T10:01:00.000Z"
+    }
+    ```
+
+    After the message is accepted, the API starts an agent run. The response also includes a `runId` and a `realtimeToken` you can use to stream the agent reply.
+  </Step>
+  <Step title="Stream the response">
+    Use the `realtimeToken` from the previous step with Trigger.dev realtime to subscribe to the agent run output.
+
+    ```javascript
+    import { subscribe } from "@trigger.dev/sdk/v3";
+    
+    const stream = await subscribe({
+      url: `http://localhost:3000/api/v1/runs/${runId}/realtime-token`,
+      token: realtimeToken,
+    });
+    
+    for await (const chunk of stream) {
+      process.stdout.write(chunk.data);
+    }
+    ```
+
+    As the agent generates tokens, they arrive in real time through this stream. When the run finishes, the stream closes.
+  </Step>
+</Steps>
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Authentication" href="/authentication">
+    Learn how Clerk tokens work and how to handle auth errors.
+  </Card>
+
+  <Card title="Core Concepts" href="/concepts/chats">
+    Explore chats, runs, waitpoints, and attachments in depth.
+  </Card>
+
+  <Card title="API Reference" href="/api-reference/introduction">
+    Browse the full endpoint list and request/response schemas.
+  </Card>
+</CardGroup>

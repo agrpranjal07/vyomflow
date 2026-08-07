@@ -1,0 +1,36 @@
+---
+title: "Error Codes and Responses"
+description: "Every VyomFlow API error returns a uniform JSON envelope. This page lists all status codes, error codes, and what to do when you see them."
+sidebarTitle: "Errors"
+---
+
+Every error in the VyomFlow API uses the same JSON envelope, so you can write one handler for all failure paths. The envelope contains an error code you can switch on, a human-readable message, and a details field reserved for future structured metadata.
+
+## Error envelope
+
+```json
+{
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Not found.",
+    "details": null
+  }
+}
+```
+
+## Status codes and error codes
+
+| HTTP Status | Code | Meaning | What to do |
+| --- | --- | --- | --- |
+| 400 | `BAD_REQUEST` | Request body or query failed validation | Check your request body against the schema |
+| 401 | `UNAUTHORIZED` | Missing or invalid Authorization header | Refresh your Clerk token and retry |
+| 402 | `INSUFFICIENT_CREDITS` | Not enough credit balance | Check your balance; reduce message complexity |
+| 404 | `NOT_FOUND` | Resource does not exist or belongs to another user | Verify the resource id and that you own it |
+| 409 | `CONFLICT` | Request conflicts with current state (for example, a run is already active) | Wait for the active run to complete before sending another message |
+| 429 | `RATE_LIMITED` | Per-user send-rate limit exceeded | Retry after a short wait |
+| 503 | `REALTIME_UNAVAILABLE` | Turn dispatched successfully but realtime token minting failed | The message was accepted; retry fetching the realtime token |
+| 500 | `SERVER_ERROR` | Unexpected server-side failure | Retry with exponential backoff; contact support if persistent |
+
+<Note>
+  404 is deliberately non-leaking: a chat that was never yours and a chat that never existed produce byte-identical responses.
+</Note>

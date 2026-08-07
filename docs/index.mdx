@@ -1,0 +1,49 @@
+---
+title: "VyomFlow API: Build AI Chat Experiences"
+description: "VyomFlow API lets you build AI-powered chat experiences with agents, tool calls, real-time streaming, and file attachments in one REST API."
+sidebarTitle: "Introduction"
+---
+
+The VyomFlow API is a REST backend for AI agent chat products. It handles chats, messages, agent runs, waitpoints, and file attachments, all behind a single set of endpoints. If you are building a chat UI, a CLI client, or any integration that needs conversational AI with tool calling and streaming, this API gives you the primitives to do it without managing your own agent orchestration layer.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Get up and running with your first chat and message in minutes.
+  </Card>
+
+  <Card title="Authentication" icon="key" href="/authentication">
+    Learn how to authenticate requests with Clerk bearer tokens.
+  </Card>
+
+  <Card title="Core Concepts" icon="book" href="/concepts/chats">
+    Understand chats, runs, waitpoints, and attachments.
+  </Card>
+
+  <Card title="API Reference" icon="code" href="/api-reference/introduction">
+    Browse endpoints, request/response shapes, and error codes.
+  </Card>
+</CardGroup>
+
+## What you can build
+
+- **Conversational agents** that maintain context across multi-turn chats
+- **Multi-turn chats with file attachments** uploaded before or during a conversation
+- **Real-time streamed responses** via Trigger.dev realtime tokens, so users see output as it generates
+- **Tool-call orchestration with credits**, where tool calls (image generation, cropping, video merging) draw from balance and LLM usage via OpenRouter free tier costs zero application credits
+
+## How it works
+
+<Steps>
+  <Step title="Create a chat">
+    Start a new conversation by calling `POST /api/v1/chats`. The API returns a chat ID you will use for every subsequent message.
+  </Step>
+  <Step title="Send a message">
+    Post to `POST /api/v1/chats/{chatId}/messages`. This reserves credit admission upfront and kicks off an agent run.
+  </Step>
+  <Step title="Stream the run's output">
+    Request a realtime token from `GET /api/v1/runs/{runId}/realtime-token` and open a stream so users see the agent response as it arrives.
+  </Step>
+  <Step title="Respond to waitpoints">
+    If the agent pauses for input, call `POST /api/v1/waitpoints/{waitpointId}/respond` to supply the missing information and resume the run.
+  </Step>
+</Steps>

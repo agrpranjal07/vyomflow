@@ -1,0 +1,27 @@
+---
+title: "How Credits Work in VyomFlow"
+description: "Credits control access to tool calls (image generation, cropping, and video merging). Learn how admission, reservation, and settlement work during an agent turn."
+sidebarTitle: "Credits"
+---
+
+Credits in VyomFlow gate access to tool calls. LLM usage routed through the OpenRouter free tier costs zero application credits, so your balance is only consumed when the agent invokes a tool during a turn.
+
+## Admission check
+
+When you send a message, the API checks your credit balance upfront. If the initial admission cannot be covered, the request returns `402 INSUFFICIENT_CREDITS` before any message is persisted or any provider call is made.
+
+## Reservation and top-ups
+
+The orchestrator reserves a minimum credit hold at the start of the turn. If a tool call needs more than the reservation covers, it tops up the hold before dispatching. If your remaining balance cannot cover a top-up, the turn terminates safely: completed tool calls are settled, and the untouched remainder of the reservation is released.
+
+## Settlement
+
+At the end of the turn, the final credit cost is settled against your balance. The total deducted reflects only the work that was actually performed.
+
+## Zero-cost usage
+
+LLM calls routed through OpenRouter's free tier are recorded for observability at zero application-credit cost. You only spend credits when tool calls run.
+
+<Note>
+  Credits are never charged retroactively for work already completed. If a turn terminates mid-run, only the tools that actually ran are settled.
+</Note>

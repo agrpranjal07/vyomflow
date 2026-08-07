@@ -1,0 +1,71 @@
+---
+title: "Attachments: Send Files with Your Messages"
+sidebarTitle: "Attachments"
+description: "Attachments let you upload files and include them in agent messages. Learn the three-step upload flow: request upload params, upload to storage, then mark complete."
+---
+
+Attachments are files (images, documents, and other media) that you can send alongside messages to the agent. The VyomFlow API uses a three-step upload flow so you can stream large files directly to storage without proxying them through the API.
+
+## Upload flow
+
+<Steps>
+  <Step title="Request upload parameters">
+    Call the upload-params endpoint to receive a pre-signed storage URL and the fields you need for the next step.
+
+    ```bash
+    curl http://localhost:3000/api/v1/attachments/upload-params \
+      -H "Authorization: Bearer <clerk-session-token>"
+    ```
+
+    The response includes the storage URL, required form fields, and the `attachmentId` you will use later.
+  </Step>
+  <Step title="Upload the file">
+    PUT or POST the file bytes directly to the storage URL returned in step 1. This call goes to the storage provider, not the VyomFlow API, so do not include the `Authorization: Bearer` header here.
+  </Step>
+  <Step title="Mark the upload complete">
+    Once the file is in storage, tell the VyomFlow API the upload is finished so the attachment becomes usable.
+
+    ```bash
+    curl -X POST http://localhost:3000/api/v1/attachments/att_abc123/complete \
+      -H "Authorization: Bearer <clerk-session-token>"
+    ```
+  </Step>
+</Steps>
+
+## Using an attachment in a message
+
+After the upload is marked complete, include the `attachmentId` in the message body when you send a message to a chat.
+
+```json
+{
+  "content": "Please summarize this document.",
+  "attachmentIds": ["att_abc123"]
+}
+```
+
+## The Attachment object
+
+<ResponseField name="id" type="string">
+  Unique identifier for the attachment, used in message bodies and API calls.
+</ResponseField>
+
+<ResponseField name="filename" type="string">
+  Original name of the uploaded file.
+</ResponseField>
+
+<ResponseField name="contentType" type="string">
+  MIME type of the file, for example `image/png` or `application/pdf`.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current upload status. One of `pending` or `complete`.
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp when the attachment was created.
+</ResponseField>
+
+## Next steps
+
+- Send your first message with an attachment in the [Quickstart](/quickstart)
+- Learn how chats and messages work in [Chats](/concepts/chats)

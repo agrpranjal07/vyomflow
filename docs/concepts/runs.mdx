@@ -1,0 +1,97 @@
+---
+title: "Agent Runs: How the AI Processes Your Messages"
+sidebarTitle: "Runs"
+description: "A Run is created each time you send a message. It tracks the agent execution lifecycle, tool calls, streaming output, and completion status."
+---
+
+A Run represents one full agent turn from the moment you send a message to when the agent finishes processing. Every time you [post a message](/concepts/chats) to a chat, the API creates a Run behind the scenes. It tracks the agent's execution lifecycle, including status changes, tool calls, streaming output, and final completion.
+
+## The Run object
+
+<ResponseField name="id" type="string">
+  Unique identifier for the run.
+</ResponseField>
+
+<ResponseField name="chatId" type="string">
+  The chat this run belongs to.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current status of the run: `pending`, `running`, `completed`, `failed`, or `cancelled`.
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp of when the run was created.
+</ResponseField>
+
+<ResponseField name="updatedAt" type="string">
+  ISO 8601 timestamp of the last update to the run.
+</ResponseField>
+
+## Lifecycle
+
+When you send a message, the Run moves through the following states:
+
+1. **pending** — the run is queued and waiting to start.
+2. **running** — the agent is actively executing, making tool calls and generating output.
+3. **completed**, **failed**, or **cancelled** — the run has finished.
+
+Only one run can be active per chat at a time. If you send a new message while a previous run is still running, the API queues the new run until the current one completes.
+
+## Cancelling a run
+
+You can stop an active run at any time. Any credits reserved but not yet consumed are released back to your balance.
+
+```bash
+curl -X POST http://localhost:3000/api/v1/runs/{runId}/cancel \
+  -H "Authorization: Bearer <clerk-session-token>"
+```
+
+## Realtime streaming
+
+To follow a run's progress in real time, request a short-lived token and subscribe to the event stream via Trigger.dev realtime.
+
+### 1. Get a realtime token
+
+```bash
+curl http://localhost:3000/api/v1/runs/{runId}/realtime-token \
+  -H "Authorization: Bearer <clerk-session-token>"
+```
+
+The response returns a token you use in the next step.
+
+### 2. Subscribe to the stream
+
+```javascript
+import { TriggerRealtime } from '@trigger.dev/realtime';
+
+const client = new TriggerRealtime({ token: '<realtime-token>' });
+
+const stream = client.subscribe('run-events', { runId: '<runId>' });
+
+stream.on('event', (event) => {
+  console.log('Run event:', event);
+});
+
+stream.on('complete', () => {
+  console.log('Run finished');
+});
+```
+
+## Error states
+
+If a run fails due to insufficient credits, it ends with a `402` admission error before any provider call is made. This protects your balance from partial execution charges. For more details on how credits are reserved and refunded, see [Credits](/credits).
+
+Runs can also fail due to provider errors or invalid tool responses. In all failure cases, the run status becomes `failed` and the error details are available through the event stream or by fetching the run directly.
+
+## Related concepts
+
+<CardGroup cols={2}>
+  <Card title="Chats" href="/concepts/chats">
+    Learn how to create chats and send messages that trigger runs.
+  </Card>
+
+  <Card title="Waitpoints" href="/concepts/waitpoints">
+    Discover how runs pause and resume for human-in-the-loop interactions.
+  </Card>
+</CardGroup>

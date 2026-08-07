@@ -1,0 +1,4448 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "VyomFlow API",
+    "version": "1.0.0",
+    "description": "Internal REST surface (S1–S6) exposed as reference documentation. This is the S8 minimum-fallback scope (Submission Requirement #13) — generated directly from the same Zod contracts the Route Handlers validate against, not a hand-maintained duplicate. Auth documented here is the app's own Clerk bearer scheme; see the public API-key section for the versioned public surface, where shipped."
+  },
+  "servers": [
+    {
+      "url": "{baseUrl}",
+      "variables": {
+        "baseUrl": {
+          "default": "http://localhost:3000"
+        }
+      }
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ClerkBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Clerk session token, `Authorization: Bearer <token>`. This documents the app's own internal auth as of S1-S6 — see S8-public-api-bonus.md for the fallback scope this doc covers, and the public API-key scheme's own page once the full scope ships."
+      }
+    },
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {}
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "Chat": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "pinnedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "activeRunId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "pinnedAt",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "ListChatsResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "pinnedAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                },
+                "activeRunId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "pinnedAt",
+                "createdAt",
+                "updatedAt"
+              ]
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ]
+      },
+      "Message": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "chatId": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant",
+              "system",
+              "tool"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "streaming",
+              "complete",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "content": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "text"
+                      ]
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "text"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "thinking"
+                      ]
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "text"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "tool_use"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "input": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "id",
+                    "name",
+                    "input"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "tool_result"
+                      ]
+                    },
+                    "toolUseId": {
+                      "type": "string"
+                    },
+                    "output": {},
+                    "isError": {
+                      "type": "boolean"
+                    },
+                    "toolInvocationId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "DISPATCHING",
+                        "QUEUED",
+                        "RUNNING",
+                        "COMPLETED",
+                        "FAILED",
+                        "CANCELLED"
+                      ]
+                    },
+                    "durationMs": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "creditUsed": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "resultUrls": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "uri"
+                      }
+                    },
+                    "errorMessage": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "toolUseId"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "reasoning"
+                      ]
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "text"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "citation"
+                      ]
+                    },
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "url"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "usage"
+                      ]
+                    },
+                    "promptTokens": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "completionTokens": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "costCredits": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "promptTokens",
+                    "completionTokens"
+                  ]
+                }
+              ]
+            }
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "chatId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "messageId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "orderIndex": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "PENDING",
+                    "READY",
+                    "FAILED",
+                    "CANCELLED"
+                  ]
+                },
+                "mimeType": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "byteSize": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "fileName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "resultUrl": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uri"
+                },
+                "errorCode": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "errorMessage": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "uploaded",
+                    "generated"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "chatId",
+                "messageId",
+                "orderIndex",
+                "status",
+                "mimeType",
+                "byteSize",
+                "fileName",
+                "resultUrl",
+                "errorCode",
+                "errorMessage",
+                "createdAt",
+                "updatedAt",
+                "source"
+              ]
+            }
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "chatId",
+          "role",
+          "status",
+          "content",
+          "attachments",
+          "createdAt"
+        ]
+      },
+      "ListMessagesResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "chatId": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "assistant",
+                    "system",
+                    "tool"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "streaming",
+                    "complete",
+                    "failed",
+                    "cancelled"
+                  ]
+                },
+                "content": {
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "text"
+                            ]
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "text"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "thinking"
+                            ]
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "text"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "tool_use"
+                            ]
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "input": {
+                            "type": "object",
+                            "additionalProperties": {}
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "id",
+                          "name",
+                          "input"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "tool_result"
+                            ]
+                          },
+                          "toolUseId": {
+                            "type": "string"
+                          },
+                          "output": {},
+                          "isError": {
+                            "type": "boolean"
+                          },
+                          "toolInvocationId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "DISPATCHING",
+                              "QUEUED",
+                              "RUNNING",
+                              "COMPLETED",
+                              "FAILED",
+                              "CANCELLED"
+                            ]
+                          },
+                          "durationMs": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "creditUsed": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "resultUrls": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "format": "uri"
+                            }
+                          },
+                          "errorMessage": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "toolUseId"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "reasoning"
+                            ]
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "text"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "citation"
+                            ]
+                          },
+                          "url": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "url"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "usage"
+                            ]
+                          },
+                          "promptTokens": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "completionTokens": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "costCredits": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "promptTokens",
+                          "completionTokens"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "attachments": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "chatId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "messageId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "orderIndex": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "PENDING",
+                          "READY",
+                          "FAILED",
+                          "CANCELLED"
+                        ]
+                      },
+                      "mimeType": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "byteSize": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ],
+                        "minimum": 0
+                      },
+                      "fileName": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "resultUrl": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "format": "uri"
+                      },
+                      "errorCode": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "errorMessage": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "createdAt": {
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "uploaded",
+                          "generated"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "chatId",
+                      "messageId",
+                      "orderIndex",
+                      "status",
+                      "mimeType",
+                      "byteSize",
+                      "fileName",
+                      "resultUrl",
+                      "errorCode",
+                      "errorMessage",
+                      "createdAt",
+                      "updatedAt",
+                      "source"
+                    ]
+                  }
+                },
+                "createdAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "chatId",
+                "role",
+                "status",
+                "content",
+                "attachments",
+                "createdAt"
+              ]
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ]
+      },
+      "SendTurnResponse": {
+        "type": "object",
+        "properties": {
+          "chatId": {
+            "type": "string"
+          },
+          "message": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "chatId": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "assistant",
+                  "system",
+                  "tool"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "streaming",
+                  "complete",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "content": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "text"
+                          ]
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "text"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "thinking"
+                          ]
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "text"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "tool_use"
+                          ]
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "input": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "id",
+                        "name",
+                        "input"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "tool_result"
+                          ]
+                        },
+                        "toolUseId": {
+                          "type": "string"
+                        },
+                        "output": {},
+                        "isError": {
+                          "type": "boolean"
+                        },
+                        "toolInvocationId": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "DISPATCHING",
+                            "QUEUED",
+                            "RUNNING",
+                            "COMPLETED",
+                            "FAILED",
+                            "CANCELLED"
+                          ]
+                        },
+                        "durationMs": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "creditUsed": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "resultUrls": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "uri"
+                          }
+                        },
+                        "errorMessage": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "toolUseId"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "reasoning"
+                          ]
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "text"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "citation"
+                          ]
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "url"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "usage"
+                          ]
+                        },
+                        "promptTokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "completionTokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "costCredits": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "promptTokens",
+                        "completionTokens"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "attachments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "chatId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "messageId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "orderIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "PENDING",
+                        "READY",
+                        "FAILED",
+                        "CANCELLED"
+                      ]
+                    },
+                    "mimeType": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "byteSize": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "fileName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "resultUrl": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "uri"
+                    },
+                    "errorCode": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "errorMessage": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "uploaded",
+                        "generated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "chatId",
+                    "messageId",
+                    "orderIndex",
+                    "status",
+                    "mimeType",
+                    "byteSize",
+                    "fileName",
+                    "resultUrl",
+                    "errorCode",
+                    "errorMessage",
+                    "createdAt",
+                    "updatedAt",
+                    "source"
+                  ]
+                }
+              },
+              "createdAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "chatId",
+              "role",
+              "status",
+              "content",
+              "attachments",
+              "createdAt"
+            ]
+          },
+          "run": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "chatId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "running",
+                  "waiting",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "userMessageId": {
+                "type": "string"
+              },
+              "assistantMessageId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "lastStreamIndex": {
+                "type": "integer"
+              },
+              "cancelRequestedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "requestedModel": {
+                "type": "string"
+              },
+              "resolvedModel": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "errorCode": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "errorMessage": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "finishedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "toolInvocations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "agentRunId": {
+                      "type": "string"
+                    },
+                    "turnIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "callIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "toolCallId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "nodeType": {
+                      "type": "string"
+                    },
+                    "input": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "DISPATCHING",
+                        "QUEUED",
+                        "RUNNING",
+                        "COMPLETED",
+                        "FAILED",
+                        "CANCELLED"
+                      ]
+                    },
+                    "creditEstimate": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "creditUsed": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "resultUrls": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "type": "string",
+                        "format": "uri"
+                      }
+                    },
+                    "errorCode": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "errorMessage": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "startedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "finishedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "durationMs": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "agentRunId",
+                    "turnIndex",
+                    "callIndex",
+                    "toolCallId",
+                    "name",
+                    "nodeType",
+                    "input",
+                    "status",
+                    "creditEstimate",
+                    "creditUsed",
+                    "resultUrls",
+                    "errorCode",
+                    "errorMessage",
+                    "startedAt",
+                    "finishedAt",
+                    "durationMs",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              },
+              "totalCreditsUsed": {
+                "type": "number",
+                "minimum": 0
+              },
+              "pendingWaitpoint": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "agentRunId": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "CREDIT_APPROVAL"
+                        ]
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "PENDING",
+                          "COMPLETED",
+                          "EXPIRED"
+                        ]
+                      },
+                      "requestPayload": {
+                        "type": "object",
+                        "properties": {
+                          "toolName": {
+                            "type": "string"
+                          },
+                          "estimatedCredits": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "threshold": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "toolName",
+                          "estimatedCredits",
+                          "threshold"
+                        ]
+                      },
+                      "resolvedPayload": {
+                        "type": [
+                          "object",
+                          "null"
+                        ],
+                        "properties": {
+                          "approved": {
+                            "type": "boolean"
+                          },
+                          "respondedAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "approved",
+                          "respondedAt"
+                        ]
+                      },
+                      "expiresAt": {
+                        "type": "string"
+                      },
+                      "resolvedAt": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "agentRunId",
+                      "kind",
+                      "status",
+                      "requestPayload",
+                      "resolvedPayload",
+                      "expiresAt",
+                      "resolvedAt"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "agentRunId": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "CLARIFICATION"
+                        ]
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "PENDING",
+                          "COMPLETED",
+                          "EXPIRED"
+                        ]
+                      },
+                      "requestPayload": {
+                        "type": "object",
+                        "properties": {
+                          "question": {
+                            "type": "string"
+                          },
+                          "options": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "question"
+                        ]
+                      },
+                      "resolvedPayload": {
+                        "type": [
+                          "object",
+                          "null"
+                        ],
+                        "properties": {
+                          "answer": {
+                            "type": "string"
+                          },
+                          "respondedAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "answer",
+                          "respondedAt"
+                        ]
+                      },
+                      "expiresAt": {
+                        "type": "string"
+                      },
+                      "resolvedAt": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "agentRunId",
+                      "kind",
+                      "status",
+                      "requestPayload",
+                      "resolvedPayload",
+                      "expiresAt",
+                      "resolvedAt"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "chatId",
+              "status",
+              "userMessageId",
+              "assistantMessageId",
+              "lastStreamIndex",
+              "cancelRequestedAt",
+              "requestedModel",
+              "resolvedModel",
+              "errorCode",
+              "errorMessage",
+              "createdAt",
+              "updatedAt",
+              "startedAt",
+              "finishedAt",
+              "toolInvocations",
+              "totalCreditsUsed",
+              "pendingWaitpoint"
+            ]
+          },
+          "realtime": {
+            "type": "object",
+            "properties": {
+              "runId": {
+                "type": "string"
+              },
+              "streamKey": {
+                "type": "string"
+              },
+              "accessToken": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "runId",
+              "streamKey",
+              "accessToken",
+              "expiresAt"
+            ]
+          }
+        },
+        "required": [
+          "chatId",
+          "message",
+          "run",
+          "realtime"
+        ]
+      },
+      "AgentRun": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "chatId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "waiting",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "userMessageId": {
+            "type": "string"
+          },
+          "assistantMessageId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastStreamIndex": {
+            "type": "integer"
+          },
+          "cancelRequestedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestedModel": {
+            "type": "string"
+          },
+          "resolvedModel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finishedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "toolInvocations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "agentRunId": {
+                  "type": "string"
+                },
+                "turnIndex": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "callIndex": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "toolCallId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "nodeType": {
+                  "type": "string"
+                },
+                "input": {
+                  "type": "object",
+                  "additionalProperties": {}
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "DISPATCHING",
+                    "QUEUED",
+                    "RUNNING",
+                    "COMPLETED",
+                    "FAILED",
+                    "CANCELLED"
+                  ]
+                },
+                "creditEstimate": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "creditUsed": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "resultUrls": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "string",
+                    "format": "uri"
+                  }
+                },
+                "errorCode": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "errorMessage": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "startedAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "finishedAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "durationMs": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "agentRunId",
+                "turnIndex",
+                "callIndex",
+                "toolCallId",
+                "name",
+                "nodeType",
+                "input",
+                "status",
+                "creditEstimate",
+                "creditUsed",
+                "resultUrls",
+                "errorCode",
+                "errorMessage",
+                "startedAt",
+                "finishedAt",
+                "durationMs",
+                "createdAt",
+                "updatedAt"
+              ]
+            }
+          },
+          "totalCreditsUsed": {
+            "type": "number",
+            "minimum": 0
+          },
+          "pendingWaitpoint": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "agentRunId": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "CREDIT_APPROVAL"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "PENDING",
+                      "COMPLETED",
+                      "EXPIRED"
+                    ]
+                  },
+                  "requestPayload": {
+                    "type": "object",
+                    "properties": {
+                      "toolName": {
+                        "type": "string"
+                      },
+                      "estimatedCredits": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "threshold": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "toolName",
+                      "estimatedCredits",
+                      "threshold"
+                    ]
+                  },
+                  "resolvedPayload": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "properties": {
+                      "approved": {
+                        "type": "boolean"
+                      },
+                      "respondedAt": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "approved",
+                      "respondedAt"
+                    ]
+                  },
+                  "expiresAt": {
+                    "type": "string"
+                  },
+                  "resolvedAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "agentRunId",
+                  "kind",
+                  "status",
+                  "requestPayload",
+                  "resolvedPayload",
+                  "expiresAt",
+                  "resolvedAt"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "agentRunId": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "CLARIFICATION"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "PENDING",
+                      "COMPLETED",
+                      "EXPIRED"
+                    ]
+                  },
+                  "requestPayload": {
+                    "type": "object",
+                    "properties": {
+                      "question": {
+                        "type": "string"
+                      },
+                      "options": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "question"
+                    ]
+                  },
+                  "resolvedPayload": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "properties": {
+                      "answer": {
+                        "type": "string"
+                      },
+                      "respondedAt": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "answer",
+                      "respondedAt"
+                    ]
+                  },
+                  "expiresAt": {
+                    "type": "string"
+                  },
+                  "resolvedAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "agentRunId",
+                  "kind",
+                  "status",
+                  "requestPayload",
+                  "resolvedPayload",
+                  "expiresAt",
+                  "resolvedAt"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "chatId",
+          "status",
+          "userMessageId",
+          "assistantMessageId",
+          "lastStreamIndex",
+          "cancelRequestedAt",
+          "requestedModel",
+          "resolvedModel",
+          "errorCode",
+          "errorMessage",
+          "createdAt",
+          "updatedAt",
+          "startedAt",
+          "finishedAt",
+          "toolInvocations",
+          "totalCreditsUsed",
+          "pendingWaitpoint"
+        ]
+      },
+      "RealtimeAccess": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "streamKey": {
+            "type": "string"
+          },
+          "accessToken": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "streamKey",
+          "accessToken",
+          "expiresAt"
+        ]
+      },
+      "Waitpoint": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "agentRunId": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "CREDIT_APPROVAL"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "PENDING",
+                  "COMPLETED",
+                  "EXPIRED"
+                ]
+              },
+              "requestPayload": {
+                "type": "object",
+                "properties": {
+                  "toolName": {
+                    "type": "string"
+                  },
+                  "estimatedCredits": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "threshold": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "toolName",
+                  "estimatedCredits",
+                  "threshold"
+                ]
+              },
+              "resolvedPayload": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "approved": {
+                    "type": "boolean"
+                  },
+                  "respondedAt": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "approved",
+                  "respondedAt"
+                ]
+              },
+              "expiresAt": {
+                "type": "string"
+              },
+              "resolvedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "agentRunId",
+              "kind",
+              "status",
+              "requestPayload",
+              "resolvedPayload",
+              "expiresAt",
+              "resolvedAt"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "agentRunId": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "CLARIFICATION"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "PENDING",
+                  "COMPLETED",
+                  "EXPIRED"
+                ]
+              },
+              "requestPayload": {
+                "type": "object",
+                "properties": {
+                  "question": {
+                    "type": "string"
+                  },
+                  "options": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "question"
+                ]
+              },
+              "resolvedPayload": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "answer": {
+                    "type": "string"
+                  },
+                  "respondedAt": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "answer",
+                  "respondedAt"
+                ]
+              },
+              "expiresAt": {
+                "type": "string"
+              },
+              "resolvedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "agentRunId",
+              "kind",
+              "status",
+              "requestPayload",
+              "resolvedPayload",
+              "expiresAt",
+              "resolvedAt"
+            ]
+          }
+        ]
+      },
+      "CreditBalance": {
+        "type": "object",
+        "properties": {
+          "balance": {
+            "type": "string"
+          },
+          "held": {
+            "type": "string"
+          },
+          "available": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "balance",
+          "held",
+          "available"
+        ]
+      },
+      "ListCreditLedgerResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "RESERVE",
+                    "CAPTURE",
+                    "RELEASE",
+                    "USAGE"
+                  ]
+                },
+                "amount": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "runId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "toolInvocationId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "amount",
+                "createdAt",
+                "runId",
+                "toolInvocationId"
+              ]
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ]
+      },
+      "CreditUsageSummary": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "toolKey": {
+                  "type": "string"
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "totalDebited": {
+                  "type": "string"
+                },
+                "records": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "latestUsageAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "toolKey",
+                "displayName",
+                "totalDebited",
+                "records",
+                "latestUsageAt"
+              ]
+            }
+          },
+          "totalDebitedAll": {
+            "type": "string"
+          },
+          "recordsAll": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "categoriesCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "periodStart": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "periodEnd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "groups",
+          "totalDebitedAll",
+          "recordsAll",
+          "categoriesCount",
+          "periodStart",
+          "periodEnd"
+        ]
+      },
+      "ListCreditUsageEntriesResponse": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "runId": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "string"
+                },
+                "timestamp": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "runId",
+                "amount",
+                "timestamp"
+              ]
+            }
+          }
+        },
+        "required": [
+          "entries"
+        ]
+      },
+      "CreditRunSteps": {
+        "type": "object",
+        "properties": {
+          "chatId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "RESERVE",
+                    "CAPTURE",
+                    "RELEASE",
+                    "USAGE"
+                  ]
+                },
+                "amount": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "runId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "toolInvocationId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "toolName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "amount",
+                "createdAt",
+                "runId",
+                "toolInvocationId",
+                "toolName"
+              ]
+            }
+          }
+        },
+        "required": [
+          "chatId",
+          "items"
+        ]
+      },
+      "Attachment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "chatId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "messageId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "orderIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "READY",
+              "FAILED",
+              "CANCELLED"
+            ]
+          },
+          "mimeType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "byteSize": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "fileName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resultUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "uploaded",
+              "generated"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "chatId",
+          "messageId",
+          "orderIndex",
+          "status",
+          "mimeType",
+          "byteSize",
+          "fileName",
+          "resultUrl",
+          "errorCode",
+          "errorMessage",
+          "createdAt",
+          "updatedAt",
+          "source"
+        ]
+      },
+      "ListAttachmentsResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "chatId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "messageId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "orderIndex": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "PENDING",
+                    "READY",
+                    "FAILED",
+                    "CANCELLED"
+                  ]
+                },
+                "mimeType": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "byteSize": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
+                "fileName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "resultUrl": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uri"
+                },
+                "errorCode": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "errorMessage": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "uploaded",
+                    "generated"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "chatId",
+                "messageId",
+                "orderIndex",
+                "status",
+                "mimeType",
+                "byteSize",
+                "fileName",
+                "resultUrl",
+                "errorCode",
+                "errorMessage",
+                "createdAt",
+                "updatedAt",
+                "source"
+              ]
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ]
+      },
+      "RequestUploadParamsResponse": {
+        "type": "object",
+        "properties": {
+          "uploads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "attachmentId": {
+                  "type": "string"
+                },
+                "params": {
+                  "type": "string"
+                },
+                "signature": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "attachmentId",
+                "params",
+                "signature"
+              ]
+            }
+          }
+        },
+        "required": [
+          "uploads"
+        ]
+      },
+      "ToolInvocation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agentRunId": {
+            "type": "string"
+          },
+          "turnIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "callIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "toolCallId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "nodeType": {
+            "type": "string"
+          },
+          "input": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "DISPATCHING",
+              "QUEUED",
+              "RUNNING",
+              "COMPLETED",
+              "FAILED",
+              "CANCELLED"
+            ]
+          },
+          "creditEstimate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "creditUsed": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "resultUrls": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finishedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "durationMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agentRunId",
+          "turnIndex",
+          "callIndex",
+          "toolCallId",
+          "name",
+          "nodeType",
+          "input",
+          "status",
+          "creditEstimate",
+          "creditUsed",
+          "resultUrls",
+          "errorCode",
+          "errorMessage",
+          "startedAt",
+          "finishedAt",
+          "durationMs",
+          "createdAt",
+          "updatedAt"
+        ]
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/api/v1/chats": {
+      "post": {
+        "tags": [
+          "Chats"
+        ],
+        "summary": "Create a chat",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Chat created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Chat"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Chats"
+        ],
+        "summary": "List the caller's chats (cursor-paginated, newest first)",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "required": false,
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "required": false,
+            "name": "pinned",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of chats.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListChatsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chats/{chatId}": {
+      "get": {
+        "tags": [
+          "Chats"
+        ],
+        "summary": "Get a chat",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The chat.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Chat"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found — either the chat never existed or is not owned by the caller. Identical response either way (00-master-spec.md §6, non-leaking 404).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Chats"
+        ],
+        "summary": "Rename a chat",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "title"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated chat.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Chat"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Chats"
+        ],
+        "summary": "Soft-delete a chat",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted (soft-delete; no body)."
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chats/{chatId}/pin": {
+      "post": {
+        "tags": [
+          "Chats"
+        ],
+        "summary": "Pin (favorite) a chat",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Updated chat.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Chat"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Chats"
+        ],
+        "summary": "Unpin a chat",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Updated chat.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Chat"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chats/{chatId}/messages": {
+      "post": {
+        "tags": [
+          "Messages"
+        ],
+        "summary": "Submit a message and start (or continue) an agent turn",
+        "description": "Reserves credit admission, persists the user message, and dispatches a durable Trigger.dev turn. One active run per chat is enforced — a second send while a run is active returns 409 CONFLICT. Idempotent per `send:{chatId}:{messageId}` (00-master-spec.md §4).",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "text"
+                              ]
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "text"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "thinking"
+                              ]
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "text"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "tool_use"
+                              ]
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "input": {
+                              "type": "object",
+                              "additionalProperties": {}
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id",
+                            "name",
+                            "input"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "tool_result"
+                              ]
+                            },
+                            "toolUseId": {
+                              "type": "string"
+                            },
+                            "output": {},
+                            "isError": {
+                              "type": "boolean"
+                            },
+                            "toolInvocationId": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "DISPATCHING",
+                                "QUEUED",
+                                "RUNNING",
+                                "COMPLETED",
+                                "FAILED",
+                                "CANCELLED"
+                              ]
+                            },
+                            "durationMs": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "creditUsed": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "resultUrls": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "format": "uri"
+                              }
+                            },
+                            "errorMessage": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "toolUseId"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "reasoning"
+                              ]
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "text"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "citation"
+                              ]
+                            },
+                            "url": {
+                              "type": "string",
+                              "format": "uri"
+                            },
+                            "title": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "url"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "usage"
+                              ]
+                            },
+                            "promptTokens": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "completionTokens": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "model": {
+                              "type": "string"
+                            },
+                            "costCredits": {
+                              "type": "number",
+                              "minimum": 0
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "promptTokens",
+                            "completionTokens"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "attachments": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id"
+                      ]
+                    },
+                    "maxItems": 10,
+                    "default": []
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "content"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Message persisted and turn dispatched.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendTurnResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Insufficient credits to start this turn.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A run is already active on this chat.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Application-level send-rate limit exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Messages"
+        ],
+        "summary": "List a chat's messages (cursor-paginated)",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of messages, oldest-to-newest within the page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMessagesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{runId}": {
+      "get": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Get a run's current status, including its tool invocations",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{runId}/cancel": {
+      "post": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Cancel an active run",
+        "description": "Cascades cancellation to in-flight children; a media-processing task already in flight cannot itself be cancelled remotely, so a background reconciliation sweep later captures its true final cost (00-master-spec.md §4 scenario 7).",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{runId}/realtime-token": {
+      "get": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Mint a fresh Trigger.dev realtime access token for this run",
+        "description": "Trigger.dev public access tokens default to a 15-minute expiry; this endpoint is the mandatory refresh path for turns that run longer than that (00-master-spec.md §8).",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fresh realtime access token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RealtimeAccess"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/waitpoints/{waitpointId}/respond": {
+      "post": {
+        "tags": [
+          "Waitpoints"
+        ],
+        "summary": "Respond to a pending CREDIT_APPROVAL or CLARIFICATION waitpoint",
+        "description": "Resumes the suspended run. A duplicate response to an already-`COMPLETED`/`EXPIRED` waitpoint is a no-op guarded on `Waitpoint.status` (00-master-spec.md §4 scenario 9).",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "waitpointId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "CREDIT_APPROVAL"
+                        ]
+                      },
+                      "approved": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "approved"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "CLARIFICATION"
+                        ]
+                      },
+                      "answer": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "answer"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Waitpoint resolved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Waitpoint"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/credits": {
+      "get": {
+        "tags": [
+          "Credits"
+        ],
+        "summary": "Get the caller's credit balance",
+        "description": "available = balance - held, computed at read time — never a stored/cached value.",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller's balance.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditBalance"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/credits/ledger": {
+      "get": {
+        "tags": [
+          "Credits"
+        ],
+        "summary": "List the caller's credit ledger, optionally filtered to one tool bucket",
+        "description": "Cursor-paginated, net-`CAPTURE`/`USAGE`-only rows (`RESERVE`/`RELEASE` are hold-lifecycle bookkeeping, excluded here — see `/ledger/run/{runId}` for the full raw lifecycle).",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of ledger entries.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListCreditLedgerResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameters.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/credits/usage-summary": {
+      "get": {
+        "tags": [
+          "Credits"
+        ],
+        "summary": "Get the caller's real per-tool credit usage aggregation",
+        "description": "A `GROUP BY toolInvocation.name` aggregation over `CreditLedger` CAPTURE/USAGE rows — backs the /usage dashboard's stat cards and Overview tab.",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-tool usage groups plus overall totals.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditUsageSummary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/credits/usage-entries": {
+      "get": {
+        "tags": [
+          "Credits"
+        ],
+        "summary": "List the caller's netted usage entries for one tool bucket",
+        "description": "One row per run within the requested tool bucket (backs the /usage Detailed View tab's record table) — `amount` is that run's CAPTURE/USAGE total, never RESERVE/RELEASE.",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Netted usage entries for the requested tool.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListCreditUsageEntriesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameters (missing `tool`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/credits/ledger/run/{runId}": {
+      "get": {
+        "tags": [
+          "Credits"
+        ],
+        "summary": "Get one run's full raw credit-ledger step breakdown",
+        "description": "Every `CreditLedger` row sharing this run's `runId` — the full RESERVE/CAPTURE/RELEASE/USAGE lifecycle, not just the net-debited subset — backs the /usage \"Usage details\" modal. Caller-scoped: a runId belonging to another user returns an empty `items`/`null` chatId, never a 404/403 leak of whether that runId exists.",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "That run's full ledger step breakdown.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditRunSteps"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/attachments/upload-params": {
+      "post": {
+        "tags": [
+          "Attachments"
+        ],
+        "summary": "Mint signed Transloadit assembly parameters for a resumable direct upload",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "chatId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "fileName": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 255
+                        },
+                        "mimeType": {
+                          "type": "string",
+                          "enum": [
+                            "image/png",
+                            "image/jpeg",
+                            "image/webp",
+                            "image/gif",
+                            "video/mp4",
+                            "video/webm",
+                            "video/quicktime",
+                            "audio/mpeg",
+                            "audio/wav",
+                            "audio/mp4",
+                            "audio/ogg"
+                          ]
+                        },
+                        "byteSize": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 524288000
+                        }
+                      },
+                      "required": [
+                        "fileName",
+                        "mimeType",
+                        "byteSize"
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 10
+                  }
+                },
+                "required": [
+                  "files"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed upload parameters, one set per requested file.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestUploadParamsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "File count/size/MIME type over the configured limits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/attachments": {
+      "get": {
+        "tags": [
+          "Attachments"
+        ],
+        "summary": "List the caller's media-library attachments (cursor-paginated)",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": false,
+            "name": "chatId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "required": false,
+            "name": "unbound",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "uploaded",
+                "generated"
+              ]
+            },
+            "required": false,
+            "name": "source",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of attachments.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListAttachmentsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/attachments/{attachmentId}/complete": {
+      "post": {
+        "tags": [
+          "Attachments"
+        ],
+        "summary": "Mark a direct upload complete once the Transloadit assembly finishes",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "attachmentId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "assemblyId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "assemblyId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Finalized attachment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attachment"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/attachments/{attachmentId}": {
+      "delete": {
+        "tags": [
+          "Attachments"
+        ],
+        "summary": "Permanently delete a media-library attachment",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "attachmentId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {}
+}

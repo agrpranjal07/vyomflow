@@ -1,0 +1,68 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "luma",
+  "name": "VyomFlow API",
+  "colors": {
+    "primary": "#007DB9",
+    "light": "#59B7E4",
+    "dark": "#00659B"
+  },
+  "favicon": "/vyomflow-docs-favicon.svg",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "index",
+              "quickstart",
+              "authentication"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/chats",
+              "concepts/runs",
+              "concepts/waitpoints",
+              "concepts/attachments"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "errors",
+              "rate-limits",
+              "credits"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api-reference/introduction"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "openapi": "openapi.json"
+          }
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/agrpranjal07/vyomflow-backend"
+      }
+    ]
+  }
+}

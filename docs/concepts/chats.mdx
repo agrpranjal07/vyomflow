@@ -1,0 +1,80 @@
+---
+title: "Chats: Persistent Conversation Containers"
+sidebarTitle: "Chats"
+description: "A Chat is the top-level container for a conversation in VyomFlow. Learn about the Chat object, its lifecycle, and how to manage chat lists."
+---
+
+A **Chat** is the top-level container for every conversation in VyomFlow. It holds an ordered sequence of messages and serves as the entry point for every interaction you have with an agent. Every message you send and every agent run you trigger happens inside a specific chat.
+
+## The Chat object
+
+Each chat is represented by a JSON object with the following fields:
+
+<ResponseField name="id" type="string" required>
+  Unique identifier for the chat (UUIDv4).
+</ResponseField>
+
+<ResponseField name="title" type="string" required>
+  Display title of the chat. Auto-generated from the first user message if not provided during creation.
+</ResponseField>
+
+<ResponseField name="pinnedAt" type="string | null">
+  ISO 8601 timestamp when the chat was pinned, or `null` if it is not pinned. Updated by toggling the pinned state.
+</ResponseField>
+
+<ResponseField name="createdAt" type="string" required>
+  ISO 8601 timestamp when the chat was created. This value never changes.
+</ResponseField>
+
+<ResponseField name="updatedAt" type="string" required>
+  ISO 8601 timestamp when the chat was last updated (new message, pin toggle, or other mutation). Ordered chronologically.
+</ResponseField>
+
+<ResponseField name="activeRunId" type="string | null">
+  The ID of the currently active agent [run](/concepts/runs) inside this chat, or `null` when no run is in progress. While this is set, sending another message returns a `409 CONFLICT`.
+</ResponseField>
+
+## Lifecycle
+
+A chat moves through a simple lifecycle from creation to archival.
+
+<Steps>
+  <Step title="Create a chat">
+    Send a `POST` request to `/api/v1/chats`. You can optionally provide a `title`. If omitted, the title is set automatically from the first user message.
+  </Step>
+  <Step title="Send messages">
+    Add messages by posting to `/api/v1/chats/{chatId}/messages`. Each message becomes part of the chat's history and updates `updatedAt`.
+  </Step>
+  <Step title="Wait for the run to finish">
+    Only one [run](/concepts/runs) can be active inside a chat at any time. The `activeRunId` field tells you whether a run is currently in progress. If you try to send a new message while `activeRunId` is set, the API returns `409 CONFLICT`.
+  </Step>
+  <Step title="Delete when done">
+    Remove a chat and all its contents with `DELETE /api/v1/chats/{chatId}`. This action is permanent and cannot be undone.
+  </Step>
+</Steps>
+
+## Pinning
+
+Pinning lets you mark important chats so they are easy to find. Pinning is a toggle: calling the pin endpoint repeatedly switches the state on and off.
+
+```bash POST /api/v1/chats/{chatId}/pin
+POST /api/v1/chats/{chatId}/pin
+Authorization: Bearer <clerk-session-token>
+```
+
+When you pin a chat, `pinnedAt` is set to the current ISO 8601 timestamp. When you unpin it, `pinnedAt` becomes `null`. The `updatedAt` field is also updated every time the pinned state changes.
+
+## Listing and filtering
+
+To retrieve the chats you have access to, send a `GET` request to the chats collection endpoint.
+
+```bash GET /api/v1/chats
+GET /api/v1/chats
+Authorization: Bearer <clerk-session-token>
+```
+
+The response is a paginated list ordered by `updatedAt` in descending order, so the most recently active chats appear first. Use query parameters to navigate pages. If a chat is owned by another user, it is not included in the results because VyomFlow returns `404` for resources outside your ownership scope rather than `403`.
+
+## Cross-link
+
+Now that you understand how chats work, you can read about [runs](/concepts/runs) to learn what happens after you send a message, or check the full [API reference](/api-reference/introduction) for every endpoint related to chats.
