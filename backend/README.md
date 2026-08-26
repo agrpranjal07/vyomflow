@@ -139,6 +139,6 @@ threshold. Structured logs on every code path in the turn lifecycle carry `chatI
 ## API documentation
 
 Generated OpenAPI reference (from the internal request/response contracts in `src/contracts/**`,
-via `pnpm docs:openapi`), published on Mintlify: **https://pranjal-personal.mintlify.site/**. This
+via `pnpm docs:openapi`), published on Mintlify: **https://vyom-flow.mintlify.site/**. This
 documents the endpoints that exist internally as of the current build, not a separate public-only
 API surface.

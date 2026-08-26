@@ -48,7 +48,7 @@ const SHORTCUT_HINT_NEW_TASK = "Ctrl+Shift+O";
 // to the live Mintlify site (S8-public-api-bonus.md) so NEXT_PUBLIC_API_DOCS_URL
 // only needs to be set to override it.
 const API_DOCS_URL =
-  process.env.NEXT_PUBLIC_API_DOCS_URL ?? "https://pranjal-personal.mintlify.site/";
+  process.env.NEXT_PUBLIC_API_DOCS_URL ?? "https://vyom-flow.mintlify.site/";
 
 // Icon order matches the reference: system → light → dark (audit finding #12).
 const THEME_OPTIONS = [
