@@ -1,39 +1,40 @@
 ---
 title: "Get Started with VyomFlow API"
 sidebarTitle: "Quickstart"
-description: "Make your first VyomFlow API request in under 5 minutes: create a chat, send a message, and stream the agent response."
+description: "Make your first VyomFlow API request against production: create a chat, send a message, stream the response, and check your credit balance."
 ---
 
-Before you begin, make sure you have a running VyomFlow backend and a valid Clerk session token. The backend defaults to `http://localhost:3000`, and every request must include an `Authorization: Bearer <token>` header.
+Every step below is copy-pasteable against the real production API at `https://api.vyomflow.co.in`. You only need an API key.
 
 <Steps>
-  <Step title="Get your Clerk session token">
-    Your frontend authenticates users with Clerk. Retrieve the current session token from the Clerk JS SDK so you can include it in API requests:
+  <Step title="Mint an API key">
+    Sign in to [www.vyomflow.co.in](https://www.vyomflow.co.in) and open **Settings → API Keys** (`/settings/api-keys`). Create a key with at least `chats:write`, `chats:read`, `runs:write`, `runs:read`, `waitpoints:respond`, and `credits:read`. Export it:
 
-    ```javascript
-    const token = await session.getToken();
+    ```bash
+    export VYOMFLOW_API_KEY="<your-api-key>"
     ```
 
-    Pass this token as a Bearer token in the `Authorization` header on every call.
+    See [Authentication](/authentication) for scopes and key lifecycle.
   </Step>
-  <Step title="Create a chat">
-    Start by creating a new chat session. Send a `POST` request to `/api/v1/chats` with your Clerk token.
 
+  <Step title="Create a chat">
     <CodeGroup>
 
     ```bash curl
-    curl -X POST http://localhost:3000/api/v1/chats \
-      -H "Authorization: Bearer <clerk-session-token>" \
-      -H "Content-Type: application/json"
+    curl -s -X POST https://api.vyomflow.co.in/api/public/v1/chats \
+      -H "Authorization: Bearer $VYOMFLOW_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"title": "My first chat"}'
     ```
 
     ```javascript JavaScript
-    const res = await fetch("http://localhost:3000/api/v1/chats", {
+    const res = await fetch("https://api.vyomflow.co.in/api/public/v1/chats", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${token}`,
+        Authorization: `Bearer ${process.env.VYOMFLOW_API_KEY}`,
         "Content-Type": "application/json",
       },
+      body: JSON.stringify({ title: "My first chat" }),
     });
     const chat = await res.json();
     console.log(chat);
@@ -41,81 +42,134 @@ Before you begin, make sure you have a running VyomFlow backend and a valid Cler
 
     </CodeGroup>
 
-    Example response:
+    Example response (`201`):
 
     ```json
     {
       "id": "chat_01JXYZ1234567890ABCDEF",
-      "title": "New chat",
-      "createdAt": "2025-01-15T10:00:00.000Z",
-      "updatedAt": "2025-01-15T10:00:00.000Z",
-      "pinnedAt": null
+      "title": "My first chat",
+      "pinnedAt": null,
+      "createdAt": "2026-08-27T10:00:00.000Z",
+      "updatedAt": "2026-08-27T10:00:00.000Z",
+      "activeRunId": null
     }
     ```
 
-    Save the `id` value. You will use it in the next step.
+    Save `id` as `$CHAT_ID` — you'll use it in every subsequent call.
   </Step>
-  <Step title="Send a message">
-    Post a message to the chat you just created. The request body needs a `content` field with the text you want to send.
 
+  <Step title="Send a message">
     <CodeGroup>
 
     ```bash curl
-    curl -X POST http://localhost:3000/api/v1/chats/chat_01JXYZ1234567890ABCDEF/messages \
-      -H "Authorization: Bearer <clerk-session-token>" \
+    curl -s -X POST https://api.vyomflow.co.in/api/public/v1/chats/$CHAT_ID/messages \
+      -H "Authorization: Bearer $VYOMFLOW_API_KEY" \
       -H "Content-Type: application/json" \
-      -d '{"content": "Hello, agent!"}'
+      -d '{"content": [{"type": "text", "text": "Hello, agent!"}]}'
     ```
 
     ```javascript JavaScript
     const messageRes = await fetch(
-      `http://localhost:3000/api/v1/chats/${chat.id}/messages`,
+      `https://api.vyomflow.co.in/api/public/v1/chats/${chat.id}/messages`,
       {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${token}`,
+          Authorization: `Bearer ${process.env.VYOMFLOW_API_KEY}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ content: "Hello, agent!" }),
-      }
+        body: JSON.stringify({ content: [{ type: "text", text: "Hello, agent!" }] }),
+      },
     );
-    const message = await messageRes.json();
-    console.log(message);
+    const turn = await messageRes.json();
+    console.log(turn);
     ```
 
     </CodeGroup>
 
-    Example response:
+    Example response (`201`):
 
     ```json
     {
-      "id": "msg_01JXYZ0987654321FEDCBA",
       "chatId": "chat_01JXYZ1234567890ABCDEF",
-      "content": "Hello, agent!",
-      "role": "user",
-      "createdAt": "2025-01-15T10:01:00.000Z"
+      "message": {
+        "id": "msg_01JXYZ0987654321FEDCBA",
+        "chatId": "chat_01JXYZ1234567890ABCDEF",
+        "role": "user",
+        "content": [{ "type": "text", "text": "Hello, agent!" }],
+        "status": "complete",
+        "createdAt": "2026-08-27T10:01:00.000Z"
+      },
+      "run": {
+        "id": "run_01JXYZABCDEF1234567890",
+        "chatId": "chat_01JXYZ1234567890ABCDEF",
+        "status": "queued",
+        "userMessageId": "msg_01JXYZ0987654321FEDCBA",
+        "assistantMessageId": null,
+        "lastStreamIndex": -1,
+        "requestedModel": "openrouter/free",
+        "createdAt": "2026-08-27T10:01:00.000Z"
+      },
+      "stream": {
+        "url": "https://api.vyomflow.co.in/api/public/v1/runs/run_01JXYZABCDEF1234567890/stream",
+        "fromIndex": 0
+      }
     }
     ```
 
-    After the message is accepted, the API starts an agent run. The response also includes a `runId` and a `realtimeToken` you can use to stream the agent reply.
+    An optional `Idempotency-Key` header on this request makes a retried POST replay the original turn instead of sending a duplicate message and charging credits twice.
+
+    Save `run.id` as `$RUN_ID`. The `stream.url` is where you consume live output.
   </Step>
-  <Step title="Stream the response">
-    Use the `realtimeToken` from the previous step with Trigger.dev realtime to subscribe to the agent run output.
 
-    ```javascript
-    import { subscribe } from "@trigger.dev/sdk/v3";
-    
-    const stream = await subscribe({
-      url: `http://localhost:3000/api/v1/runs/${runId}/realtime-token`,
-      token: realtimeToken,
-    });
-    
-    for await (const chunk of stream) {
-      process.stdout.write(chunk.data);
+  <Step title="Stream the response">
+    Open the SSE stream with `Authorization` as a header (never a query parameter — `EventSource` can't send custom headers, so use `fetch` or a header-capable SSE client):
+
+    ```bash
+    curl -N --http1.1 \
+      -H "Authorization: Bearer $VYOMFLOW_API_KEY" \
+      https://api.vyomflow.co.in/api/public/v1/runs/$RUN_ID/stream
+    ```
+
+    You'll see events like `run.status`, `message.delta`, `tool.status`, and eventually a terminal `run.completed`/`run.failed`/`run.cancelled` event that closes the stream. Full event reference: [Streaming](/streaming).
+  </Step>
+
+  <Step title="Answer a waitpoint, if one appears">
+    Some turns pause on a `waitpoint.created` event — most commonly a `CREDIT_APPROVAL` waitpoint before an expensive tool call. Answer it to resume the run:
+
+    ```bash
+    curl -s -X POST https://api.vyomflow.co.in/api/public/v1/waitpoints/$WAITPOINT_ID/respond \
+      -H "Authorization: Bearer $VYOMFLOW_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"kind": "CREDIT_APPROVAL", "approved": true}'
+    ```
+
+    If no waitpoint appears, skip this step — most turns complete without one.
+  </Step>
+
+  <Step title="Check the run's final state">
+    ```bash
+    curl -s https://api.vyomflow.co.in/api/public/v1/runs/$RUN_ID \
+      -H "Authorization: Bearer $VYOMFLOW_API_KEY"
+    ```
+
+    This is the REST recovery path — useful if your stream connection dropped, or just to confirm the run's terminal `status` and `totalCreditsUsed` after the fact.
+  </Step>
+
+  <Step title="Check your credit balance">
+    ```bash
+    curl -s https://api.vyomflow.co.in/api/public/v1/me/credits \
+      -H "Authorization: Bearer $VYOMFLOW_API_KEY"
+    ```
+
+    ```json
+    {
+      "balance": "97.5000",
+      "held": "0.0000",
+      "available": "97.5000"
     }
     ```
 
-    As the agent generates tokens, they arrive in real time through this stream. When the run finishes, the stream closes.
+    Balances cross the wire as strings, not numbers, so a client never rounds a money value through a float.
   </Step>
 </Steps>
 
@@ -123,14 +177,14 @@ Before you begin, make sure you have a running VyomFlow backend and a valid Cler
 
 <CardGroup cols={3}>
   <Card title="Authentication" href="/authentication">
-    Learn how Clerk tokens work and how to handle auth errors.
+    API keys, scopes, and the security model.
   </Card>
 
-  <Card title="Core Concepts" href="/concepts/chats">
-    Explore chats, runs, waitpoints, and attachments in depth.
+  <Card title="Streaming" href="/streaming">
+    The full SSE event reference and reconnect protocol.
   </Card>
 
-  <Card title="API Reference" href="/api-reference/introduction">
-    Browse the full endpoint list and request/response schemas.
+  <Card title="MCP" href="/mcp">
+    Connect an MCP client like Claude Code directly to VyomFlow.
   </Card>
 </CardGroup>

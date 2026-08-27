@@ -6,6 +6,10 @@ description: "Attachments let you upload files and include them in agent message
 
 Attachments are files (images, documents, and other media) that you can send alongside messages to the agent. The VyomFlow API uses a three-step upload flow so you can stream large files directly to storage without proxying them through the API.
 
+<Note>
+  Attachments are currently only available on the internal `https://api.vyomflow.co.in/api/v1` surface, authenticated with a Clerk session token — there is no public, API-key-authenticated attachments endpoint under `/api/public/v1` today. This page documents the first-party app's own upload flow; an external/agent caller cannot currently attach files via the public API or MCP.
+</Note>
+
 ## Upload flow
 
 <Steps>
@@ -13,7 +17,7 @@ Attachments are files (images, documents, and other media) that you can send alo
     Call the upload-params endpoint to receive a pre-signed storage URL and the fields you need for the next step.
 
     ```bash
-    curl http://localhost:3000/api/v1/attachments/upload-params \
+    curl https://api.vyomflow.co.in/api/v1/attachments/upload-params \
       -H "Authorization: Bearer <clerk-session-token>"
     ```
 
@@ -26,7 +30,7 @@ Attachments are files (images, documents, and other media) that you can send alo
     Once the file is in storage, tell the VyomFlow API the upload is finished so the attachment becomes usable.
 
     ```bash
-    curl -X POST http://localhost:3000/api/v1/attachments/att_abc123/complete \
+    curl -X POST https://api.vyomflow.co.in/api/v1/attachments/att_abc123/complete \
       -H "Authorization: Bearer <clerk-session-token>"
     ```
   </Step>
@@ -34,12 +38,12 @@ Attachments are files (images, documents, and other media) that you can send alo
 
 ## Using an attachment in a message
 
-After the upload is marked complete, include the `attachmentId` in the message body when you send a message to a chat.
+After the upload is marked complete, reference the attachment by id in the message body when you send a message to a chat ([`POST /api/public/v1/chats/{chatId}/messages`](/quickstart) accepts the same `attachments` field).
 
 ```json
 {
-  "content": "Please summarize this document.",
-  "attachmentIds": ["att_abc123"]
+  "content": [{ "type": "text", "text": "Please summarize this document." }],
+  "attachments": [{ "id": "att_abc123" }]
 }
 ```
 

@@ -1,59 +1,59 @@
 ---
 title: "VyomFlow API Reference Overview"
 sidebarTitle: "Overview"
-description: "Base URL, authentication, versioning, and common patterns for the VyomFlow REST API."
+description: "Base URL, authentication, versioning, and common patterns for the VyomFlow public REST API."
 ---
 
-This section documents all public REST endpoints for the VyomFlow API. Every endpoint returns JSON and uses the same authentication, versioning, and error conventions described here.
+This section documents the public REST endpoints for the VyomFlow API — the surface built for external/agent callers, authenticated with a scoped API key. Every endpoint returns JSON and uses the same authentication, versioning, and error conventions described here.
 
 ## Base URL
 
-The API base URL is configurable at deployment time. The default is:
-
 ```text
-http://localhost:3000
+https://api.vyomflow.co.in
 ```
 
-All paths are prefixed with `/api/v1`. For example, the full URL to list chats is:
+All public paths are prefixed with `/api/public/v1`. For example, the full URL to list chats is:
 
 ```text
-GET http://localhost:3000/api/v1/chats
+GET https://api.vyomflow.co.in/api/public/v1/chats
 ```
+
+The MCP endpoint (`/api/mcp`) shares this same base URL and auth model — see [MCP](/mcp).
 
 ## Authentication
 
-Every endpoint requires an `Authorization` header with a Clerk session token:
+Every endpoint requires an `Authorization` header with a scoped API key:
 
 ```text
-Authorization: Bearer <clerk-session-token>
+Authorization: Bearer <api-key>
 ```
 
-If the token is missing or invalid, the API returns `401 UNAUTHORIZED`. See the [Authentication](/authentication) page for how to obtain and refresh tokens.
+If the key is missing, invalid, expired, or revoked, the API returns `401 UNAUTHORIZED`. If the key is valid but lacks a required scope, it returns `403 FORBIDDEN`. See the [Authentication](/authentication) page for how to create a key, which scopes exist, and how to use the "Try it" panel on this site.
 
 ## Versioning
 
-The current API version is **v1**. All endpoints live under `/api/v1`. Future versions will be introduced under a new path prefix with a migration window.
+The current API version is **v1**. All public endpoints live under `/api/public/v1`. Future versions will be introduced under a new path prefix with a migration window.
 
 ## Resource groups
 
 <CardGroup cols={2}>
   <Card title="Chats" icon="comments" href="/api-reference/introduction">
-    Create, list, update, and delete chat sessions.
+    Create and list chat sessions.
   </Card>
 
   <Card title="Runs" icon="play" href="/api-reference/introduction">
-    Start, cancel, and monitor agent runs within a chat.
+    Send messages, stream, and cancel agent runs within a chat.
   </Card>
 
   <Card title="Waitpoints" icon="pause" href="/api-reference/introduction">
     Respond to agent waitpoints that pause a turn for user input.
   </Card>
 
-  <Card title="Attachments" icon="paperclip" href="/api-reference/introduction">
-    Upload and complete file attachments for messages.
+  <Card title="Credits" icon="coins" href="/api-reference/introduction">
+    Read your current credit balance.
   </Card>
 </CardGroup>
 
 ## Errors and rate limits
 
-All endpoints return the same [error envelope](/errors) and are subject to per-user [rate limits](/rate-limits). Review those pages before building retry logic.
+All endpoints return the same [error envelope](/errors) and are subject to per-API-key [rate limits](/rate-limits), reported via `X-RateLimit-Limit`/`X-RateLimit-Remaining`/`X-RateLimit-Reset` and, on a `429`, `Retry-After`. Review those pages before building retry logic.

@@ -17,6 +17,18 @@ docs/       Public API documentation (Mintlify) — quickstart, concepts, API re
 See `frontend/README.md` and `backend/README.md` for each app's stack, setup, environment
 variables, and architecture notes.
 
+## Surfaces
+
+- `https://www.vyomflow.co.in` — first-party browser app, Clerk session-cookie auth.
+- `https://api.vyomflow.co.in` — the internal API (`/api/v1/*`, session-token only), a public REST
+  API (`/api/public/v1/*`, bearer API-key only), and an MCP server (`/api/mcp`, bearer API-key
+  only). The apex `https://vyomflow.co.in` redirects (308) to the `www` host.
+- `https://docs.vyomflow.co.in` — published Mintlify docs and API playground, talking to
+  `/api/public/v1/*` with a bearer API key.
+
+A signed-in user mints an API key at `https://www.vyomflow.co.in/settings/api-keys` for
+programmatic/agent access (public REST + MCP); the browser app itself uses session auth only.
+
 ## Prerequisites
 
 - Node.js 20+
@@ -51,5 +63,6 @@ pnpm test:integration        # requires the backend's Postgres running
 
 ## API documentation
 
-`docs/` holds the public API reference (Mintlify), including the generated OpenAPI document at
-`docs/openapi.json` — regenerate it from the backend with `pnpm docs:openapi`.
+`docs/` holds the public API reference (Mintlify, published at `https://docs.vyomflow.co.in`),
+including the generated OpenAPI document at `docs/openapi.json` — regenerate it from the backend
+with `pnpm docs:openapi`, never hand-edit it.

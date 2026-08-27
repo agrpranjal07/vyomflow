@@ -1,0 +1,143 @@
+---
+title: "Webhooks"
+description: "Register an outbound webhook endpoint to receive signed notifications when a run starts, completes, fails, or a tool finishes."
+sidebarTitle: "Webhooks"
+---
+
+VyomFlow can push signed HTTP notifications to your own server whenever an agent run or tool call reaches a notable state — an alternative to holding an open [SSE stream](/streaming) for every run.
+
+<Note>
+  Webhook registration is a signed-in user's own account setting on the internal `https://api.vyomflow.co.in/api/v1` surface, authenticated with a Clerk session token — not an agent-facing route, and not part of `/api/public/v1` or MCP.
+</Note>
+
+## Registering an endpoint
+
+```text
+POST /api/v1/webhooks
+```
+
+```json
+{
+  "url": "https://your-server.example.com/webhooks/vyomflow",
+  "rotateSecret": false
+}
+```
+
+`rotateSecret` is optional and only meaningful on a repeat call (see [Rotating your secret](#rotating-your-secret) below).
+
+```bash
+curl -X POST https://api.vyomflow.co.in/api/v1/webhooks \
+  -H "Authorization: Bearer <clerk-session-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://your-server.example.com/webhooks/vyomflow"}'
+```
+
+Response (`200`):
+
+```json
+{
+  "id": "wh_01JXYZ1234567890ABCDEF",
+  "url": "https://your-server.example.com/webhooks/vyomflow",
+  "secret": "5f2c...e91a",
+  "secondarySecret": null,
+  "enabled": true,
+  "createdAt": "2026-08-27T10:00:00.000Z",
+  "updatedAt": "2026-08-27T10:00:00.000Z"
+}
+```
+
+<Warning>
+  `secret` is a server-generated 32-byte random value returned in plaintext exactly once, in this response. VyomFlow never stores it anywhere you can retrieve it again, so save it immediately — it's what you use to verify delivery signatures.
+</Warning>
+
+Each VyomFlow user has exactly one webhook endpoint. Calling `POST /api/v1/webhooks` again updates the existing endpoint's `url` in place rather than creating a second one.
+
+## Rotating your secret
+
+Pass `rotateSecret: true` on a repeat call to mint a fresh `secret`. The previous secret moves into `secondarySecret` and stays valid as a fallback signer for a grace window, so you can update your receiver's verification logic without dropping in-flight deliveries. `rotateSecret` is a no-op on the very first registration call — there's nothing yet to rotate.
+
+```bash
+curl -X POST https://api.vyomflow.co.in/api/v1/webhooks \
+  -H "Authorization: Bearer <clerk-session-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://your-server.example.com/webhooks/vyomflow", "rotateSecret": true}'
+```
+
+<Warning>
+  There is no global signing-secret environment variable. Every endpoint's secret is per-user and per-endpoint, returned only in the registration/rotation response above.
+</Warning>
+
+## Events
+
+Every registered endpoint receives every event type — there is no per-event subscription filtering.
+
+| Event | Fired when |
+| --- | --- |
+| `agent.started` | A run transitions to `running` |
+| `agent.completed` | A run finishes successfully |
+| `agent.failed` | A run ends in `failed` (payload includes `errorCode`) |
+| `tool.completed` | A tool invocation completes (payload includes `toolInvocationId`, `name`, `creditUsed`) |
+
+All four payloads share `runId`, `chatId`, and `occurredAt` (ISO 8601). Example `tool.completed` body:
+
+```json
+{
+  "runId": "run_01JXYZABCDEF1234567890",
+  "chatId": "chat_01JXYZ1234567890ABCDEF",
+  "toolInvocationId": "ti_01JXYZ9876543210FEDCBA",
+  "name": "magica_crop_image",
+  "status": "COMPLETED",
+  "creditUsed": 2.5,
+  "occurredAt": "2026-08-27T10:03:12.000Z"
+}
+```
+
+## Verifying a delivery
+
+Every delivery carries these headers:
+
+| Header | Purpose |
+| --- | --- |
+| `X-Vyomflow-Signature` | `sha384=<hex(HMAC_SHA384(\`${timestamp}.${rawBody}\`, secret))>` |
+| `X-Vyomflow-Timestamp` | The `timestamp` used in the signed string |
+| `X-Vyomflow-Event-Id` | A unique id per event — use it to dedupe deliveries on your side |
+| `X-Vyomflow-Delivery-Attempt` | 1-based attempt number for this delivery |
+
+Verify with Node's `crypto` module, matching the sender's scheme exactly (`${timestamp}.${rawBody}`, HMAC-SHA384, hex):
+
+```javascript
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+function verifyVyomflowSignature(rawBody, timestamp, signatureHeader, secret) {
+  const expected = "sha384=" + createHmac("sha384", secret)
+    .update(`${timestamp}.${rawBody}`)
+    .digest("hex");
+
+  const expectedBuf = Buffer.from(expected);
+  const actualBuf = Buffer.from(signatureHeader);
+  if (expectedBuf.length !== actualBuf.length) return false;
+  return timingSafeEqual(expectedBuf, actualBuf);
+}
+
+// In your receiver:
+const timestamp = req.headers["x-vyomflow-timestamp"];
+const signature = req.headers["x-vyomflow-signature"];
+const rawBody = req.rawBody; // must be the exact, unparsed request body bytes
+
+if (Math.abs(Date.now() - Number(timestamp)) > 300_000) {
+  throw new Error("Timestamp too old — possible replay.");
+}
+if (!verifyVyomflowSignature(rawBody, timestamp, signature, secret)) {
+  throw new Error("Invalid signature.");
+}
+```
+
+<Note>
+  Verify against the raw, unparsed request body — the signature is computed over the literal bytes sent on the wire, not a re-serialized object. Reject any request where the timestamp is more than 300 seconds from your own clock, to guard against replay of an old, legitimately-signed delivery.
+</Note>
+
+If you rotated your secret recently, verify against both `secret` and `secondarySecret` (from the registration/rotation response) during the grace window — a delivery may still be signed with either.
+
+## Retries
+
+A delivery is retried up to 5 attempts total, with exponential backoff starting at 30 seconds and capping at 10 minutes between attempts (0s, 30s, 90s, 270s, 600s). If all 5 attempts fail, the delivery is marked dead and dropped — there is no further retry and no manual replay mechanism today. Design your receiver to be fast and reliably return a 2xx; treat any non-2xx or timeout as a signal your own endpoint needs attention, since VyomFlow will give up after the 5th attempt.

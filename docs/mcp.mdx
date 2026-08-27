@@ -1,0 +1,259 @@
+---
+title: "Connect an MCP Client to VyomFlow"
+description: "VyomFlow exposes an 8-tool Model Context Protocol server over streamable HTTP, authenticated with the same API keys as the REST API."
+sidebarTitle: "MCP"
+---
+
+VyomFlow runs a stateless [Model Context Protocol](https://modelcontextprotocol.io) server at `https://api.vyomflow.co.in/api/mcp`, using the streamable-HTTP transport. It exposes 8 tools that let an MCP client (an agent, an IDE, another LLM) create chats, send messages, wait on a run's progress, answer approval/clarification waitpoints, and check credits — the same underlying operations as the REST API, shaped for tool-calling.
+
+<Note>
+  This is a stateless, per-request server: no session map, no resumability at the transport layer. Each MCP request is authenticated and dispatched independently; a run's actual progress is tracked with the `cursor`/`fromIndex` mechanism described below, not by transport-level session state.
+</Note>
+
+## Endpoint and authentication
+
+```text
+https://api.vyomflow.co.in/api/mcp
+```
+
+Requests must carry an API key, exactly like the REST API (see [Authentication](/authentication)):
+
+```text
+Authorization: Bearer <api-key>
+```
+
+Session tokens (the first-party web app's Clerk cookie/token auth) are explicitly rejected here — the MCP endpoint requires an API key. A session-token caller gets a structured `403`:
+
+```json
+{
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "The MCP endpoint requires an API key (Authorization: Bearer <api key>). Session tokens are for the first-party web app only."
+  }
+}
+```
+
+The route uses the same public CORS profile as `/api/public/v1/*`. Beyond the API-key-vs-session-token check above, the route itself does not perform any additional per-tool scope gating — every tool runs as the authenticated caller (`userId`) resolved from the key.
+
+## Result shape
+
+Every tool returns the standard MCP tool-result shape — a single JSON text block:
+
+```json
+{ "content": [{ "type": "text", "text": "<JSON-encoded payload>" }] }
+```
+
+Error results additionally set `isError: true`, with `content[0].text` holding a JSON object of the shape `{ code, message, ...extra }` (for example `{ "code": "NOT_FOUND", "message": "Run not found." }`).
+
+## Tools
+
+<AccordionGroup>
+  <Accordion title="vyomflow_create_chat">
+    Create a new chat, optionally with a title. Returns the new chat's id.
+
+    | Parameter | Type | Required | Notes |
+    | --- | --- | --- | --- |
+    | `title` | string | No | Trimmed, 1–200 chars |
+
+    Result: the created chat object (`id`, `title`, `pinnedAt`, `createdAt`, `updatedAt`, `activeRunId`), as JSON text.
+  </Accordion>
+
+  <Accordion title="vyomflow_list_chats">
+    List the caller's chats, most recently created first. Cursor-paginated.
+
+    | Parameter | Type | Required | Notes |
+    | --- | --- | --- | --- |
+    | `cursor` | string | No | Opaque pagination cursor from a previous page |
+    | `limit` | integer | No | 1–100 |
+
+    Result: a paginated page of chats, as JSON text.
+  </Accordion>
+
+  <Accordion title="vyomflow_send_message">
+    Send a message to a chat, dispatching a new agent turn, then wait up to `waitSeconds` (default 30, max 55) for progress.
+
+    | Parameter | Type | Required | Notes |
+    | --- | --- | --- | --- |
+    | `chatId` | string | Yes | |
+    | `content` | string | Yes | Sent as a single text content block |
+    | `attachments` | string[] | No | Attachment ids |
+    | `model` | string | No | Requested model override |
+    | `waitSeconds` | number | No | 0–55, default 30 |
+
+    A chat allows only **one active run at a time**. See [One active run per chat](#one-active-run-per-chat) below for the error shape and the recommended follow-up.
+
+    Result on success: the same wait-outcome payload as `vyomflow_wait_for_run` (see [Wait outcome payload](#wait-outcome-payload)), plus `messageId` for the user message that was created.
+  </Accordion>
+
+  <Accordion title="vyomflow_wait_for_run">
+    Resume waiting on an in-progress run from `fromIndex` (the previous call's returned `cursor`, or `0`). Bounded to `waitSeconds` (default 30, max 55) — call again with the new cursor if `done` is still `false`.
+
+    | Parameter | Type | Required | Notes |
+    | --- | --- | --- | --- |
+    | `runId` | string | Yes | |
+    | `fromIndex` | integer | No | Non-negative, defaults to 0 |
+    | `waitSeconds` | number | No | 0–55, default 30 |
+
+    Result: the wait-outcome payload — see [Wait outcome payload](#wait-outcome-payload).
+  </Accordion>
+
+  <Accordion title="vyomflow_get_run">
+    Read a run's current durable state from the database. Never blocks.
+
+    | Parameter | Type | Required | Notes |
+    | --- | --- | --- | --- |
+    | `runId` | string | Yes | |
+
+    Result: the run's full `AgentRunDTO` — `id`, `chatId`, `status` (`queued`/`running`/`waiting`/`completed`/`failed`/`cancelled`), `userMessageId`, `assistantMessageId`, `lastStreamIndex`, `cancelRequestedAt`, `requestedModel`, `resolvedModel`, `errorCode`, `errorMessage`, timestamps, `toolInvocations`, `totalCreditsUsed`, and `pendingWaitpoint` (null, or the pending waitpoint's full DTO).
+  </Accordion>
+
+  <Accordion title="vyomflow_respond_waitpoint">
+    Answer a pending `CREDIT_APPROVAL` or `CLARIFICATION` waitpoint. Idempotent — responding to an already-resolved waitpoint returns its current state without error.
+
+    Input is a discriminated union on `kind`:
+
+    | Parameter | Type | Required | Notes |
+    | --- | --- | --- | --- |
+    | `waitpointId` | string | Yes | |
+    | `kind` | `"CREDIT_APPROVAL"` \| `"CLARIFICATION"` | Yes | |
+    | `approved` | boolean | Yes, when `kind` is `CREDIT_APPROVAL` | |
+    | `answer` | string | Yes, when `kind` is `CLARIFICATION` | 1–2000 chars |
+
+    Result: `{ waitpoint, alreadyResolved }`, where `waitpoint` is the waitpoint's current `WaitpointDTO` and `alreadyResolved` is `true` if the call found it already resolved rather than resolving it just now.
+  </Accordion>
+
+  <Accordion title="vyomflow_cancel_run">
+    Request cancellation of an in-progress run. Idempotent — a repeat call on an already-terminal run is a no-op that just returns the run's current state.
+
+    | Parameter | Type | Required | Notes |
+    | --- | --- | --- | --- |
+    | `runId` | string | Yes | |
+
+    Result: the run's `AgentRunDTO` (see `vyomflow_get_run` for the shape).
+  </Accordion>
+
+  <Accordion title="vyomflow_get_credits">
+    Read the caller's current credit balance, held amount, and available amount. No input.
+
+    Result:
+
+    ```json
+    {
+      "balance": "97.5000",
+      "held": "0.0000",
+      "available": "97.5000"
+    }
+    ```
+
+    All three values cross the wire as **strings**, not numbers — same rule as the REST `/api/public/v1/me/credits` endpoint (see [Quickstart](/quickstart)), so a client never rounds a money value through a float. `available = balance - held`, computed at read time.
+  </Accordion>
+</AccordionGroup>
+
+## One active run per chat
+
+A chat allows only one active run at a time. If `vyomflow_send_message` is called against a chat that already has a run in progress, it returns an error result instead of dispatching a second run:
+
+```json
+{
+  "code": "ACTIVE_RUN_EXISTS",
+  "runId": "run_01JXYZABCDEF1234567890",
+  "message": "..."
+}
+```
+
+Per the tool's own description: call `vyomflow_wait_for_run` with that `runId` instead of retrying the send.
+
+Other structured error codes `vyomflow_send_message` can return: `NOT_FOUND` (chat not found), `INSUFFICIENT_CREDITS`, and `RATE_LIMITED`.
+
+## Bounded `waitSeconds`
+
+Both `vyomflow_send_message` and `vyomflow_wait_for_run` accept `waitSeconds`, clamped to a **default of 30 and a max of 55**. This bound sits comfortably under both Vercel's function ceiling and a typical MCP client's own JSON-RPC timeout.
+
+A typical turn (5–20 seconds) completes within a single call. For a longer turn, call `vyomflow_wait_for_run` again, passing the previous call's returned `cursor` as `fromIndex` — this resumes the wait from exactly where the last call left off rather than restarting.
+
+## Wait outcome payload
+
+`vyomflow_send_message` and `vyomflow_wait_for_run` both return this shape on success:
+
+```json
+{
+  "runId": "run_01JXYZABCDEF1234567890",
+  "status": "running",
+  "cursor": 12,
+  "text": "...",
+  "tools": [
+    {
+      "toolInvocationId": "ti_...",
+      "name": "crop_image",
+      "status": "RUNNING",
+      "turnIndex": 0,
+      "callIndex": 0,
+      "creditUsed": 2,
+      "resultUrls": ["https://..."],
+      "errorMessage": "..."
+    }
+  ],
+  "pendingWaitpoint": null,
+  "done": false,
+  "instruction": "..."
+}
+```
+
+- **`cursor`** — the stream-index cursor to pass as `fromIndex` on the next `vyomflow_wait_for_run` call to resume exactly where this one left off.
+- **`text`** — the assistant text accumulated during this one wait window (not the full message so far).
+- **`tools`** — an array of every tool invocation on the run so far, ordered by `(turnIndex, callIndex)`, each with its own `status`. This is deliberately an array, never a single "current tool" field — parallel tool calls within one turn are represented as multiple concurrent entries in this array.
+- **`done`** — `true` once the run has reached a terminal status (`completed`, `failed`, or `cancelled`).
+- **`pendingWaitpoint`** — the full `WaitpointDTO` if a waitpoint is currently pending on this run, otherwise `null`.
+- **`instruction`** — present only when `pendingWaitpoint` is non-null: a ready-to-use human-readable string telling the caller exactly which `vyomflow_respond_waitpoint` call to make and by when (it includes the waitpoint's `expiresAt`). This is how a caller learns a waitpoint needs a response — there is no separate MCP elicitation flow.
+
+`vyomflow_send_message`'s result additionally includes `messageId` for the created user message.
+
+## Waitpoints and approvals
+
+`vyomflow_respond_waitpoint` takes a `kind`-discriminated input:
+
+- `{ waitpointId, kind: "CREDIT_APPROVAL", approved: boolean }`
+- `{ waitpointId, kind: "CLARIFICATION", answer: string }` (`answer` max 2000 chars)
+
+It is idempotent: calling it again on a waitpoint that's already resolved returns `{ waitpoint, alreadyResolved: true }` with the waitpoint's current state, rather than erroring.
+
+A caller learns about a pending waitpoint through the `pendingWaitpoint`/`instruction` fields of a wait outcome (from `vyomflow_send_message` or `vyomflow_wait_for_run`), or by reading it directly off `vyomflow_get_run`'s `pendingWaitpoint` field. The full `WaitpointDTO` carries `id`, `agentRunId`, `kind`, `status` (`PENDING`/`COMPLETED`/`EXPIRED`), `requestPayload` (kind-specific — `{ toolName, estimatedCredits, threshold }` for `CREDIT_APPROVAL`, `{ question, options? }` for `CLARIFICATION`), `resolvedPayload` (null until resolved), `expiresAt`, and `resolvedAt`.
+
+## Resume semantics
+
+`vyomflow_wait_for_run`'s `fromIndex` is a stream-index cursor, not a message or turn count. Pass `0` (or omit it) to wait from the start of the run's output; pass the `cursor` value from a previous wait outcome to resume from exactly where that call left off, without re-reading already-seen text or tool-status parts. This mirrors the same `lastStreamIndex + 1` resume mechanism used by the REST/SSE stream (see [Streaming](/streaming)) — no gaps, no duplicated parts.
+
+## Cancellation
+
+`vyomflow_cancel_run` requests cancellation of an in-progress run. It is idempotent: a repeat call against a run that has already reached a terminal status is a no-op — it just returns the run's current (terminal) state rather than erroring.
+
+## Connecting Claude Code
+
+Add VyomFlow as a remote MCP server with a bearer token, either via a `.mcp.json` config file:
+
+```json
+{
+  "mcpServers": {
+    "vyomflow": {
+      "type": "http",
+      "url": "https://api.vyomflow.co.in/api/mcp",
+      "headers": {
+        "Authorization": "Bearer ${VYOMFLOW_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+or the equivalent CLI form:
+
+```bash
+claude mcp add --transport http vyomflow https://api.vyomflow.co.in/api/mcp \
+  --header "Authorization: Bearer $VYOMFLOW_API_KEY"
+```
+
+Either way, `VYOMFLOW_API_KEY` must be set in the environment (see [Authentication](/authentication) for minting a key — the MCP endpoint uses the same keys as the REST API, so grant whichever scopes the tools you intend to use require).
+
+<Warning>
+  MCP Tasks, elicitation, and resumable/stateful sessions are not supported by this server. It is stateless per request — pending approvals surface only through the `pendingWaitpoint`/`instruction` fields described above, not through a protocol-level elicitation exchange.
+</Warning>

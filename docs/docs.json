@@ -31,6 +31,14 @@
             ]
           },
           {
+            "group": "Live Access",
+            "pages": [
+              "streaming",
+              "mcp",
+              "webhooks"
+            ]
+          },
+          {
             "group": "Reference",
             "pages": [
               "errors",

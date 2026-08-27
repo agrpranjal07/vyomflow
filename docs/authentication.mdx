@@ -1,46 +1,96 @@
 ---
 title: "Authenticate Requests to the VyomFlow API"
-description: "Every VyomFlow API request requires a Clerk session bearer token passed in the Authorization header."
+description: "The public VyomFlow API (api.vyomflow.co.in/api/public/v1 and /api/mcp) is authenticated with a scoped, Clerk-issued API key sent as a bearer token."
 sidebarTitle: "Authentication"
 ---
 
-The VyomFlow API uses Clerk session tokens for authentication. There is no API key or OAuth layer. Every request must include a valid Clerk bearer token in the Authorization header.
+The public VyomFlow API — `/api/public/v1/*` REST and `/api/mcp` — is authenticated with an API key, not a Clerk session token. API keys are for programmatic and agent access (scripts, MCP clients, CI); they are not a replacement for the browser session flow the first-party app (`https://www.vyomflow.co.in`) uses.
 
-## Getting a token
+## Creating a key
 
-Tokens are obtained from the frontend Clerk SDK. Use your Clerk session object to retrieve a fresh token before each request.
+Sign in to `https://www.vyomflow.co.in` and open **Settings → API Keys** (`/settings/api-keys`), reachable from the app sidebar's "API Keys" row. This page renders Clerk's own `<APIKeys />` widget, so key creation, naming, expiration, and revocation are handled by Clerk directly — VyomFlow never stores or displays the key value itself after creation.
 
-```javascript
-const token = await session.getToken();
-```
+Each key can be granted one or more scopes:
 
-## Sending the token
+| Scope | Grants |
+| --- | --- |
+| `chats:read` | List chats, read messages |
+| `chats:write` | Create chats |
+| `runs:read` | Read run state, stream a run's output |
+| `runs:write` | Send messages (dispatch a run), cancel a run |
+| `waitpoints:respond` | Answer a pending waitpoint |
+| `credits:read` | Read your credit balance |
 
-Include the token in the `Authorization` header using the Bearer scheme.
+Grant only the scopes a given key actually needs.
+
+## Sending the key
+
+Every request must include:
 
 ```text
-Authorization: Bearer <clerk-session-token>
+Authorization: Bearer <api-key>
 ```
 
-Here is a curl example that shows how to send an authenticated request:
+<Warning>
+  Never place the key in a query parameter or anywhere else in the URL. No public route accepts a key via query string — only the `Authorization` header is honored.
+</Warning>
 
 ```bash
-curl -H "Authorization: Bearer <clerk-session-token>" \
-  http://localhost:3000/api/v1/chats
+curl -H "Authorization: Bearer $VYOMFLOW_API_KEY" \
+  https://api.vyomflow.co.in/api/public/v1/chats
 ```
 
-## How the backend uses it
+## Expiration, revocation, and instance scoping
 
-The backend verifies the token against Clerk. On first sight, it provisions a User row keyed on your Clerk user id. There is no separate signup or login endpoint.
+Keys can be set to expire and can be revoked at any time from the same Settings page. A key is also scoped to the Clerk instance that issued it — if your application ever migrates to a different Clerk instance, keys minted under the previous instance stop working and must be reissued.
 
-<Note>
-  There is no separate signup or login endpoint. Your Clerk session token is all you need.
-</Note>
+## 401 vs. 403
+
+These are distinct failure modes and worth handling differently:
+
+**401 `UNAUTHORIZED`** — the key is missing, malformed, expired, or revoked:
+
+```json
+{
+  "error": { "code": "UNAUTHORIZED", "message": "Authentication required." }
+}
+```
+
+**403 `FORBIDDEN`** — the key is valid but lacks a scope the endpoint requires:
+
+```json
+{
+  "error": { "code": "FORBIDDEN", "message": "Missing required scope(s): runs:write." }
+}
+```
+
+A 403 tells you exactly which scope to add; a 401 tells you the credential itself is the problem, not its permissions.
+
+## Secrets hygiene
+
+Treat an API key like any other credential:
+
+- Never commit it to source control.
+- Never log it, including in request/response logging middleware.
+- Store it in an environment variable or secret manager, not in application code.
+- Rotate (revoke and reissue) a key if you suspect it leaked.
+
+## Authenticating the Mintlify playground
+
+The **API Reference** tab on this site includes a live "Try it" panel for every endpoint. To use it, click the panel's bearer-auth field and paste your API key — Mintlify stores it locally in your browser for the session and attaches it as the `Authorization` header on requests the playground sends directly to `https://api.vyomflow.co.in`.
+
+## Security model
+
+- API keys are bearer credentials — anyone holding the key value can use it with whatever scopes it carries.
+- Scopes are enforced server-side on every request, not just at key-creation time.
+- Keys can expire or be revoked at any time from Clerk's key-management UI.
+- Keys are never accepted via query parameter, only the `Authorization` header.
+- Secrets must never appear in logs.
+- Public CORS (`Access-Control-Allow-Origin: *`) on `/api/public/v1/*` and `/api/mcp` does **not** imply anonymous access — every request still requires a valid, scoped key. This is safe because bearer auth carries no ambient credential (unlike a cookie), so an arbitrary origin reading the response is not a session-riding risk.
+- API-key auth is completely independent of first-party browser session auth (`/api/v1/*`, Clerk session cookie/token) — the two never mix on the same route.
+- Keys are scoped to the issuing Clerk instance.
+- The public API never returns Trigger.dev realtime tokens, stream keys, or other internal Trigger.dev identifiers in any response — the SSE stream (`/api/public/v1/runs/{runId}/stream`) is VyomFlow's own re-emitted event feed, not a pass-through of the internal Trigger.dev token.
 
 ## Ownership and access control
 
-Every resource — chats, messages, runs, attachments, and waitpoints — is scoped to the authenticated caller. If you request a resource owned by another user, the API returns `404 NOT_FOUND`. It never returns `403` or confirms that the resource exists.
-
-<Tip>
-  Token expired? Call `session.getToken()` again before retrying — Clerk tokens are short-lived.
-</Tip>
+Every resource — chats, messages, runs, attachments, and waitpoints — is scoped to the authenticated caller. Requesting a resource owned by another user returns `404 NOT_FOUND`. It never returns `403` or otherwise confirms that the resource exists.
