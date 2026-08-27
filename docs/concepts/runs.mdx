@@ -6,6 +6,10 @@ description: "A Run is created each time you send a message. It tracks the agent
 
 A Run represents one full agent turn from the moment you send a message to when the agent finishes processing. Every time you [post a message](/concepts/chats) to a chat, the API creates a Run behind the scenes. It tracks the agent's execution lifecycle, including status changes, tool calls, streaming output, and final completion.
 
+<Note>
+  This page uses the public, API-key-authenticated surface at `https://api.vyomflow.co.in/api/public/v1` — see [Authentication](/authentication). The internal `/api/v1` surface (session-token only) backs the first-party web app and is not documented here.
+</Note>
+
 ## The Run object
 
 <ResponseField name="id" type="string">
@@ -17,7 +21,7 @@ A Run represents one full agent turn from the moment you send a message to when 
 </ResponseField>
 
 <ResponseField name="status" type="string">
-  Current status of the run: `pending`, `running`, `completed`, `failed`, or `cancelled`.
+  Current status of the run: `queued`, `running`, `waiting` (paused on a waitpoint), `completed`, `failed`, or `cancelled`.
 </ResponseField>
 
 <ResponseField name="createdAt" type="string">
@@ -32,51 +36,33 @@ A Run represents one full agent turn from the moment you send a message to when 
 
 When you send a message, the Run moves through the following states:
 
-1. **pending** — the run is queued and waiting to start.
+1. **queued** — the run has been created and dispatched but hasn't started executing yet.
 2. **running** — the agent is actively executing, making tool calls and generating output.
-3. **completed**, **failed**, or **cancelled** — the run has finished.
+3. **waiting** — the run is paused on an open waitpoint (see [Waitpoints](/concepts/waitpoints)).
+4. **completed**, **failed**, or **cancelled** — the run has finished.
 
-Only one run can be active per chat at a time. If you send a new message while a previous run is still running, the API queues the new run until the current one completes.
+Only one run can be active per chat at a time. Sending a new message while a run is still active on that chat returns `409 CONFLICT`, not a queued second run.
 
 ## Cancelling a run
 
-You can stop an active run at any time. Any credits reserved but not yet consumed are released back to your balance.
+You can stop an active run at any time (requires the `runs:write` scope). Any credits reserved but not yet consumed are released back to your balance. Cancellation is idempotent — calling it again on an already-terminal run just returns the run's current state.
 
 ```bash
-curl -X POST http://localhost:3000/api/v1/runs/{runId}/cancel \
-  -H "Authorization: Bearer <clerk-session-token>"
+curl -X POST https://api.vyomflow.co.in/api/public/v1/runs/{runId}/cancel \
+  -H "Authorization: Bearer $VYOMFLOW_API_KEY"
 ```
 
-## Realtime streaming
+## Streaming
 
-To follow a run's progress in real time, request a short-lived token and subscribe to the event stream via Trigger.dev realtime.
-
-### 1. Get a realtime token
+To follow a run's progress in real time, open the SSE stream (requires the `runs:read` scope):
 
 ```bash
-curl http://localhost:3000/api/v1/runs/{runId}/realtime-token \
-  -H "Authorization: Bearer <clerk-session-token>"
+curl -N --http1.1 \
+  -H "Authorization: Bearer $VYOMFLOW_API_KEY" \
+  https://api.vyomflow.co.in/api/public/v1/runs/{runId}/stream
 ```
 
-The response returns a token you use in the next step.
-
-### 2. Subscribe to the stream
-
-```javascript
-import { TriggerRealtime } from '@trigger.dev/realtime';
-
-const client = new TriggerRealtime({ token: '<realtime-token>' });
-
-const stream = client.subscribe('run-events', { runId: '<runId>' });
-
-stream.on('event', (event) => {
-  console.log('Run event:', event);
-});
-
-stream.on('complete', () => {
-  console.log('Run finished');
-});
-```
+The full event-type reference, resume semantics, and reconnect protocol are covered in [Streaming](/streaming). If your connection drops and you don't want to reconnect the stream, `GET /api/public/v1/runs/{runId}` (`runs:read`) is the REST recovery path — it returns the same run object described above.
 
 ## Error states
 

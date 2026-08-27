@@ -3,16 +3,16 @@
   "info": {
     "title": "VyomFlow API",
     "version": "1.0.0",
-    "description": "Internal REST surface (S1–S6) exposed as reference documentation. This is the S8 minimum-fallback scope (Submission Requirement #13) — generated directly from the same Zod contracts the Route Handlers validate against, not a hand-maintained duplicate. Auth documented here is the app's own Clerk bearer scheme; see the public API-key section for the versioned public surface, where shipped."
+    "description": "The versioned public REST surface (`/api/public/v1/*`, bearer API-key auth) plus the app's own internal `/api/v1/*` surface (Clerk session-token auth), generated directly from the same Zod contracts the Route Handlers validate against — never a hand-maintained duplicate. The MCP endpoint (`/api/mcp`) is a separate streamable-HTTP JSON-RPC transport, not expressible here — see the MCP guide."
   },
   "servers": [
     {
-      "url": "{baseUrl}",
-      "variables": {
-        "baseUrl": {
-          "default": "http://localhost:3000"
-        }
-      }
+      "url": "https://api.vyomflow.co.in",
+      "description": "Production"
+    },
+    {
+      "url": "http://localhost:3000",
+      "description": "Local development"
     }
   ],
   "components": {
@@ -20,7 +20,12 @@
       "ClerkBearer": {
         "type": "http",
         "scheme": "bearer",
-        "description": "Clerk session token, `Authorization: Bearer <token>`. This documents the app's own internal auth as of S1-S6 — see S8-public-api-bonus.md for the fallback scope this doc covers, and the public API-key scheme's own page once the full scope ships."
+        "description": "Clerk session token, `Authorization: Bearer <token>` — the first-party browser app's own auth. Used only by this internal `/api/v1/*` surface, never by `/api/public/v1/*`."
+      },
+      "ApiKeyAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Clerk-native API key, `Authorization: Bearer <key>`. Minted at https://www.vyomflow.co.in/settings/api-keys, scoped per operation. 401 = missing/invalid/revoked key; 403 = valid key missing the required scope."
       }
     },
     "schemas": {
@@ -2828,6 +2833,816 @@
           "createdAt",
           "updatedAt"
         ]
+      },
+      "WebhookEndpoint": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string"
+          },
+          "secondarySecret": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "secret",
+          "secondarySecret",
+          "enabled",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "PublicSendTurnResponse": {
+        "type": "object",
+        "properties": {
+          "chatId": {
+            "type": "string"
+          },
+          "message": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "chatId": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "assistant",
+                  "system",
+                  "tool"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "streaming",
+                  "complete",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "content": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "text"
+                          ]
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "text"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "thinking"
+                          ]
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "text"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "tool_use"
+                          ]
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "input": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "id",
+                        "name",
+                        "input"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "tool_result"
+                          ]
+                        },
+                        "toolUseId": {
+                          "type": "string"
+                        },
+                        "output": {},
+                        "isError": {
+                          "type": "boolean"
+                        },
+                        "toolInvocationId": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "DISPATCHING",
+                            "QUEUED",
+                            "RUNNING",
+                            "COMPLETED",
+                            "FAILED",
+                            "CANCELLED"
+                          ]
+                        },
+                        "durationMs": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "creditUsed": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "resultUrls": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "uri"
+                          }
+                        },
+                        "errorMessage": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "toolUseId"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "reasoning"
+                          ]
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "text"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "citation"
+                          ]
+                        },
+                        "url": {
+                          "type": "string",
+                          "format": "uri"
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "url"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "usage"
+                          ]
+                        },
+                        "promptTokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "completionTokens": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "costCredits": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "promptTokens",
+                        "completionTokens"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "attachments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "chatId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "messageId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "orderIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "PENDING",
+                        "READY",
+                        "FAILED",
+                        "CANCELLED"
+                      ]
+                    },
+                    "mimeType": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "byteSize": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "fileName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "resultUrl": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "uri"
+                    },
+                    "errorCode": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "errorMessage": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "uploaded",
+                        "generated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "chatId",
+                    "messageId",
+                    "orderIndex",
+                    "status",
+                    "mimeType",
+                    "byteSize",
+                    "fileName",
+                    "resultUrl",
+                    "errorCode",
+                    "errorMessage",
+                    "createdAt",
+                    "updatedAt",
+                    "source"
+                  ]
+                }
+              },
+              "createdAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "chatId",
+              "role",
+              "status",
+              "content",
+              "attachments",
+              "createdAt"
+            ]
+          },
+          "run": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "chatId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "running",
+                  "waiting",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "userMessageId": {
+                "type": "string"
+              },
+              "assistantMessageId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "lastStreamIndex": {
+                "type": "integer"
+              },
+              "cancelRequestedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "requestedModel": {
+                "type": "string"
+              },
+              "resolvedModel": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "errorCode": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "errorMessage": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "finishedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "toolInvocations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "agentRunId": {
+                      "type": "string"
+                    },
+                    "turnIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "callIndex": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "toolCallId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "nodeType": {
+                      "type": "string"
+                    },
+                    "input": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "DISPATCHING",
+                        "QUEUED",
+                        "RUNNING",
+                        "COMPLETED",
+                        "FAILED",
+                        "CANCELLED"
+                      ]
+                    },
+                    "creditEstimate": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "creditUsed": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "resultUrls": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "type": "string",
+                        "format": "uri"
+                      }
+                    },
+                    "errorCode": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "errorMessage": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "startedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "finishedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "durationMs": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "agentRunId",
+                    "turnIndex",
+                    "callIndex",
+                    "toolCallId",
+                    "name",
+                    "nodeType",
+                    "input",
+                    "status",
+                    "creditEstimate",
+                    "creditUsed",
+                    "resultUrls",
+                    "errorCode",
+                    "errorMessage",
+                    "startedAt",
+                    "finishedAt",
+                    "durationMs",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              },
+              "totalCreditsUsed": {
+                "type": "number",
+                "minimum": 0
+              },
+              "pendingWaitpoint": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "agentRunId": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "CREDIT_APPROVAL"
+                        ]
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "PENDING",
+                          "COMPLETED",
+                          "EXPIRED"
+                        ]
+                      },
+                      "requestPayload": {
+                        "type": "object",
+                        "properties": {
+                          "toolName": {
+                            "type": "string"
+                          },
+                          "estimatedCredits": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "threshold": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "toolName",
+                          "estimatedCredits",
+                          "threshold"
+                        ]
+                      },
+                      "resolvedPayload": {
+                        "type": [
+                          "object",
+                          "null"
+                        ],
+                        "properties": {
+                          "approved": {
+                            "type": "boolean"
+                          },
+                          "respondedAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "approved",
+                          "respondedAt"
+                        ]
+                      },
+                      "expiresAt": {
+                        "type": "string"
+                      },
+                      "resolvedAt": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "agentRunId",
+                      "kind",
+                      "status",
+                      "requestPayload",
+                      "resolvedPayload",
+                      "expiresAt",
+                      "resolvedAt"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "agentRunId": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "CLARIFICATION"
+                        ]
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "PENDING",
+                          "COMPLETED",
+                          "EXPIRED"
+                        ]
+                      },
+                      "requestPayload": {
+                        "type": "object",
+                        "properties": {
+                          "question": {
+                            "type": "string"
+                          },
+                          "options": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "question"
+                        ]
+                      },
+                      "resolvedPayload": {
+                        "type": [
+                          "object",
+                          "null"
+                        ],
+                        "properties": {
+                          "answer": {
+                            "type": "string"
+                          },
+                          "respondedAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "answer",
+                          "respondedAt"
+                        ]
+                      },
+                      "expiresAt": {
+                        "type": "string"
+                      },
+                      "resolvedAt": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "agentRunId",
+                      "kind",
+                      "status",
+                      "requestPayload",
+                      "resolvedPayload",
+                      "expiresAt",
+                      "resolvedAt"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "chatId",
+              "status",
+              "userMessageId",
+              "assistantMessageId",
+              "lastStreamIndex",
+              "cancelRequestedAt",
+              "requestedModel",
+              "resolvedModel",
+              "errorCode",
+              "errorMessage",
+              "createdAt",
+              "updatedAt",
+              "startedAt",
+              "finishedAt",
+              "toolInvocations",
+              "totalCreditsUsed",
+              "pendingWaitpoint"
+            ]
+          },
+          "stream": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "fromIndex": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "url",
+              "fromIndex"
+            ]
+          }
+        },
+        "required": [
+          "chatId",
+          "message",
+          "run",
+          "stream"
+        ]
       }
     },
     "parameters": {}
@@ -3568,6 +4383,26 @@
                 }
               }
             }
+          },
+          "500": {
+            "description": "The Trigger.dev dispatch call itself failed; the turn was not started.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The turn was dispatched and is genuinely running, but minting a fresh realtime access token failed after dispatch succeeded — reload to reconnect, do not resend.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       },
@@ -3895,6 +4730,16 @@
               }
             }
           },
+          "400": {
+            "description": "Response kind doesn't match this waitpoint's kind, or malformed body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or invalid credentials.",
             "content": {
@@ -3964,6 +4809,33 @@
         "security": [
           {
             "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "tool",
+            "in": "query"
           }
         ],
         "responses": {
@@ -4046,6 +4918,16 @@
         "security": [
           {
             "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "tool",
+            "in": "query"
           }
         ],
         "responses": {
@@ -4199,7 +5081,7 @@
           }
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "Signed upload parameters, one set per requested file.",
             "content": {
               "application/json": {
@@ -4399,7 +5281,8 @@
         "tags": [
           "Attachments"
         ],
-        "summary": "Permanently delete a media-library attachment",
+        "summary": "Cancel a mid-upload attachment, or permanently delete an unbound one",
+        "description": "Cancels a PENDING upload, or permanently deletes a READY/FAILED/CANCELLED unbound row otherwise — never a row already bound to a sent message. Returns the resulting attachment, not an empty body.",
         "security": [
           {
             "ClerkBearer": []
@@ -4417,8 +5300,15 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "Deleted."
+          "200": {
+            "description": "The cancelled or deleted attachment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attachment"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or invalid credentials.",
@@ -4432,6 +5322,1046 @@
           },
           "404": {
             "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhooks": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Set (or rotate) the caller's outbound webhook endpoint",
+        "description": "One `WebhookEndpoint` row per user. First call creates it and returns a server-generated `secret` in plaintext (the only time it is ever shown again). A later call without `rotateSecret` just updates `url`; `rotateSecret: true` moves the current secret into `secondarySecret` (kept valid for a grace window) and mints a fresh `secret`. Deliveries carry `X-Vyomflow-Signature: sha384=<hex(HMAC_SHA384(`${timestamp}.${rawBody}`, secret))>`, `X-Vyomflow-Timestamp`, `X-Vyomflow-Event-Id`, and `X-Vyomflow-Delivery-Attempt` for `agent.started`/`agent.completed`/`agent.failed`/`tool.completed` events.",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "rotateSecret": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The endpoint's current state, including the secret(s) if just (re)generated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpoint"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/v1/chats": {
+      "post": {
+        "tags": [
+          "Public API"
+        ],
+        "summary": "Create a chat",
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "chats:write"
+            ]
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Chat created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Chat"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Valid key missing the required `chats:write` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Public API"
+        ],
+        "summary": "List the caller's chats (cursor-paginated, newest first)",
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "chats:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "required": false,
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "required": false,
+            "name": "pinned",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of chats.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListChatsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Valid key missing the required `chats:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/v1/chats/{chatId}/messages": {
+      "post": {
+        "tags": [
+          "Public API"
+        ],
+        "summary": "Submit a message and start (or continue) an agent turn",
+        "description": "Same Turn Lifecycle as the internal route, plus an optional `Idempotency-Key` header — a retried request presenting the same key for this chat replays the original turn's current state rather than charging credits or dispatching twice. Response omits the raw Trigger.dev realtime token; `stream.url` points at this API's own SSE endpoint instead.",
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "runs:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "text"
+                              ]
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "text"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "thinking"
+                              ]
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "text"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "tool_use"
+                              ]
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "input": {
+                              "type": "object",
+                              "additionalProperties": {}
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id",
+                            "name",
+                            "input"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "tool_result"
+                              ]
+                            },
+                            "toolUseId": {
+                              "type": "string"
+                            },
+                            "output": {},
+                            "isError": {
+                              "type": "boolean"
+                            },
+                            "toolInvocationId": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "DISPATCHING",
+                                "QUEUED",
+                                "RUNNING",
+                                "COMPLETED",
+                                "FAILED",
+                                "CANCELLED"
+                              ]
+                            },
+                            "durationMs": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "creditUsed": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "resultUrls": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "format": "uri"
+                              }
+                            },
+                            "errorMessage": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "toolUseId"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "reasoning"
+                              ]
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "text"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "citation"
+                              ]
+                            },
+                            "url": {
+                              "type": "string",
+                              "format": "uri"
+                            },
+                            "title": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "url"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "usage"
+                              ]
+                            },
+                            "promptTokens": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "completionTokens": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "model": {
+                              "type": "string"
+                            },
+                            "costCredits": {
+                              "type": "number",
+                              "minimum": 0
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "promptTokens",
+                            "completionTokens"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "attachments": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id"
+                      ]
+                    },
+                    "maxItems": 10,
+                    "default": []
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "content"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Message persisted and turn dispatched (or the replayed prior result).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicSendTurnResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Insufficient credits to start this turn.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Valid key missing the required `runs:write` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A run is already active on this chat.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-API-key rate limit exceeded (`X-RateLimit-*`/`Retry-After` headers set).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The Trigger.dev dispatch call itself failed; the turn was not started.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Public API"
+        ],
+        "summary": "List a chat's messages (cursor-paginated)",
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "chats:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of messages, oldest-to-newest within the page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMessagesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Valid key missing the required `chats:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/v1/runs/{runId}": {
+      "get": {
+        "tags": [
+          "Public API"
+        ],
+        "summary": "Get a run's current status, including its tool invocations",
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "runs:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Valid key missing the required `runs:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/v1/runs/{runId}/stream": {
+      "get": {
+        "tags": [
+          "Public API"
+        ],
+        "summary": "Subscribe to a run's live event stream (SSE)",
+        "description": "text/event-stream, not JSON — the individual event shapes are Zod-defined in src/contracts/public-events.ts and documented in full on the streaming guide, since SSE cannot be expressed as an OpenAPI response schema. Resume with the standard `Last-Event-ID` header; never pass the API key as a query parameter.",
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "runs:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "An open `text/event-stream` connection."
+          },
+          "401": {
+            "description": "Missing, invalid, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Valid key missing the required `runs:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/v1/runs/{runId}/cancel": {
+      "post": {
+        "tags": [
+          "Public API"
+        ],
+        "summary": "Cancel an active run",
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "runs:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Valid key missing the required `runs:write` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/v1/waitpoints/{waitpointId}/respond": {
+      "post": {
+        "tags": [
+          "Public API"
+        ],
+        "summary": "Respond to a pending CREDIT_APPROVAL or CLARIFICATION waitpoint",
+        "description": "Idempotent — a repeat call on an already-resolved waitpoint still returns 200 with the current DTO, never an error.",
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "waitpoints:respond"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "waitpointId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "CREDIT_APPROVAL"
+                        ]
+                      },
+                      "approved": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "approved"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "CLARIFICATION"
+                        ]
+                      },
+                      "answer": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "answer"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Waitpoint resolved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Waitpoint"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Response kind doesn't match this waitpoint's kind, or malformed body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Valid key missing the required `waitpoints:respond` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (non-leaking — see above).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/v1/me/credits": {
+      "get": {
+        "tags": [
+          "Public API"
+        ],
+        "summary": "Get the caller's credit balance",
+        "description": "available = balance - held, computed at read time — never a stored/cached value.",
+        "security": [
+          {
+            "ApiKeyAuth": [
+              "credits:read"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller's balance.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditBalance"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Valid key missing the required `credits:read` scope.",
             "content": {
               "application/json": {
                 "schema": {

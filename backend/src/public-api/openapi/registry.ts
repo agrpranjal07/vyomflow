@@ -58,9 +58,13 @@ import {
   CreditBalanceDTOSchema,
   CreditRunStepsDTOSchema,
   CreditUsageSummaryDTOSchema,
+  ListCreditLedgerQuerySchema,
   ListCreditLedgerResponseSchema,
+  ListCreditUsageEntriesQuerySchema,
   ListCreditUsageEntriesResponseSchema,
 } from "@/contracts/credits";
+import { SetWebhookEndpointRequestSchema, WebhookEndpointDTOSchema } from "@/contracts/webhooks";
+import { PublicSendTurnResponseSchema } from "@/public-api/mappers";
 
 export function buildRegistry(): OpenAPIRegistry {
   const registry = new OpenAPIRegistry();
@@ -69,9 +73,17 @@ export function buildRegistry(): OpenAPIRegistry {
     type: "http",
     scheme: "bearer",
     description:
-      "Clerk session token, `Authorization: Bearer <token>`. This documents the app's own " +
-      "internal auth as of S1-S6 — see S8-public-api-bonus.md for the fallback scope this " +
-      "doc covers, and the public API-key scheme's own page once the full scope ships.",
+      "Clerk session token, `Authorization: Bearer <token>` — the first-party browser app's " +
+      "own auth. Used only by this internal `/api/v1/*` surface, never by `/api/public/v1/*`.",
+  });
+
+  registry.registerComponent("securitySchemes", "ApiKeyAuth", {
+    type: "http",
+    scheme: "bearer",
+    description:
+      "Clerk-native API key, `Authorization: Bearer <key>`. Minted at " +
+      "https://www.vyomflow.co.in/settings/api-keys, scoped per operation. 401 = missing/" +
+      "invalid/revoked key; 403 = valid key missing the required scope.",
   });
 
   const ErrorResponse = registry.register("ApiError", ApiErrorSchema);
@@ -80,6 +92,13 @@ export function buildRegistry(): OpenAPIRegistry {
     return {
       description,
       content: { "application/json": { schema: ErrorResponse } },
+    };
+  }
+
+  function apiKeyErrorResponses(scope: string) {
+    return {
+      401: errorResponse("Missing, invalid, or revoked API key."),
+      403: errorResponse(`Valid key missing the required \`${scope}\` scope.`),
     };
   }
 
@@ -229,6 +248,11 @@ export function buildRegistry(): OpenAPIRegistry {
       429: errorResponse("Application-level send-rate limit exceeded."),
       404: errorResponse("Not found (non-leaking — see above)."),
       401: errorResponse("Missing or invalid credentials."),
+      500: errorResponse("The Trigger.dev dispatch call itself failed; the turn was not started."),
+      503: errorResponse(
+        "The turn was dispatched and is genuinely running, but minting a fresh realtime " +
+          "access token failed after dispatch succeeded — reload to reconnect, do not resend.",
+      ),
     },
   });
 
@@ -326,6 +350,7 @@ export function buildRegistry(): OpenAPIRegistry {
         description: "Waitpoint resolved.",
         content: { "application/json": { schema: WaitpointDTO } },
       },
+      400: errorResponse("Response kind doesn't match this waitpoint's kind, or malformed body."),
       404: errorResponse("Not found (non-leaking — see above)."),
       401: errorResponse("Missing or invalid credentials."),
     },
@@ -364,6 +389,7 @@ export function buildRegistry(): OpenAPIRegistry {
       "Cursor-paginated, net-`CAPTURE`/`USAGE`-only rows (`RESERVE`/`RELEASE` are hold-lifecycle " +
       "bookkeeping, excluded here — see `/ledger/run/{runId}` for the full raw lifecycle).",
     security,
+    request: { query: ListCreditLedgerQuerySchema },
     responses: {
       200: {
         description: "A page of ledger entries.",
@@ -401,6 +427,7 @@ export function buildRegistry(): OpenAPIRegistry {
       "One row per run within the requested tool bucket (backs the /usage Detailed View tab's " +
       "record table) — `amount` is that run's CAPTURE/USAGE total, never RESERVE/RELEASE.",
     security,
+    request: { query: ListCreditUsageEntriesQuerySchema },
     responses: {
       200: {
         description: "Netted usage entries for the requested tool.",
@@ -453,7 +480,7 @@ export function buildRegistry(): OpenAPIRegistry {
       body: { content: { "application/json": { schema: RequestUploadParamsBatchRequestSchema } } },
     },
     responses: {
-      200: {
+      201: {
         description: "Signed upload parameters, one set per requested file.",
         content: { "application/json": { schema: RequestUploadParamsResponse } },
       },
@@ -502,11 +529,18 @@ export function buildRegistry(): OpenAPIRegistry {
     method: "delete",
     path: "/api/v1/attachments/{attachmentId}",
     tags: ["Attachments"],
-    summary: "Permanently delete a media-library attachment",
+    summary: "Cancel a mid-upload attachment, or permanently delete an unbound one",
+    description:
+      "Cancels a PENDING upload, or permanently deletes a READY/FAILED/CANCELLED unbound row " +
+      "otherwise — never a row already bound to a sent message. Returns the resulting " +
+      "attachment, not an empty body.",
     security,
     request: { params: AttachmentIdParamSchema },
     responses: {
-      204: { description: "Deleted." },
+      200: {
+        description: "The cancelled or deleted attachment.",
+        content: { "application/json": { schema: AttachmentDTO } },
+      },
       404: errorResponse("Not found (non-leaking — see above)."),
       401: errorResponse("Missing or invalid credentials."),
     },
@@ -515,6 +549,213 @@ export function buildRegistry(): OpenAPIRegistry {
   // Registered for completeness/cross-linking even though not directly
   // exposed as a standalone path — ToolInvocation is embedded in AgentRun.
   registry.register("ToolInvocation", ToolInvocationDTOSchema);
+
+  // ---- Webhooks (S8 Phase 6) -------------------------------------------
+  // Session-token auth on the internal `/api/v1` surface — this is an
+  // account setting a signed-in browser user configures, not agent-facing,
+  // so it is not under `/api/public/v1`.
+  const WebhookEndpointDTO = registry.register("WebhookEndpoint", WebhookEndpointDTOSchema);
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/webhooks",
+    tags: ["Webhooks"],
+    summary: "Set (or rotate) the caller's outbound webhook endpoint",
+    description:
+      "One `WebhookEndpoint` row per user. First call creates it and returns a server-generated " +
+      "`secret` in plaintext (the only time it is ever shown again). A later call without " +
+      "`rotateSecret` just updates `url`; `rotateSecret: true` moves the current secret into " +
+      "`secondarySecret` (kept valid for a grace window) and mints a fresh `secret`. Deliveries " +
+      "carry `X-Vyomflow-Signature: sha384=<hex(HMAC_SHA384(`${timestamp}.${rawBody}`, secret))>`, " +
+      "`X-Vyomflow-Timestamp`, `X-Vyomflow-Event-Id`, and `X-Vyomflow-Delivery-Attempt` for " +
+      "`agent.started`/`agent.completed`/`agent.failed`/`tool.completed` events.",
+    security,
+    request: {
+      body: { content: { "application/json": { schema: SetWebhookEndpointRequestSchema } } },
+    },
+    responses: {
+      200: {
+        description: "The endpoint's current state, including the secret(s) if just (re)generated.",
+        content: { "application/json": { schema: WebhookEndpointDTO } },
+      },
+      400: errorResponse("Malformed request body."),
+      401: errorResponse("Missing or invalid credentials."),
+    },
+  });
+
+  // ---- Public API (S8 Phase 3/4) ----------------------------------------
+  // Bearer API-key auth, per-path required scope, public CORS (`*`). Same
+  // underlying `src/services/**` as the internal `/api/v1/*` routes above —
+  // these are documented separately because auth, security requirements,
+  // and (for send-turn) response shape differ.
+  const PublicSendTurnResponse = registry.register(
+    "PublicSendTurnResponse",
+    PublicSendTurnResponseSchema,
+  );
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/public/v1/chats",
+    tags: ["Public API"],
+    summary: "Create a chat",
+    security: [{ ApiKeyAuth: ["chats:write"] }],
+    request: {
+      body: { content: { "application/json": { schema: CreateChatRequestSchema } } },
+    },
+    responses: {
+      201: { description: "Chat created.", content: { "application/json": { schema: ChatDTO } } },
+      400: errorResponse("Malformed request body."),
+      ...apiKeyErrorResponses("chats:write"),
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/public/v1/chats",
+    tags: ["Public API"],
+    summary: "List the caller's chats (cursor-paginated, newest first)",
+    security: [{ ApiKeyAuth: ["chats:read"] }],
+    request: { query: ListChatsQuerySchema },
+    responses: {
+      200: {
+        description: "Page of chats.",
+        content: { "application/json": { schema: ListChatsResponse } },
+      },
+      ...apiKeyErrorResponses("chats:read"),
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/public/v1/chats/{chatId}/messages",
+    tags: ["Public API"],
+    summary: "Submit a message and start (or continue) an agent turn",
+    description:
+      "Same Turn Lifecycle as the internal route, plus an optional `Idempotency-Key` header — a " +
+      "retried request presenting the same key for this chat replays the original turn's " +
+      "current state rather than charging credits or dispatching twice. Response omits the raw " +
+      "Trigger.dev realtime token; `stream.url` points at this API's own SSE endpoint instead.",
+    security: [{ ApiKeyAuth: ["runs:write"] }],
+    request: {
+      params: ChatIdParamSchema,
+      headers: z.object({ "Idempotency-Key": z.string().optional() }),
+      body: { content: { "application/json": { schema: CreateMessageRequestSchema } } },
+    },
+    responses: {
+      201: {
+        description: "Message persisted and turn dispatched (or the replayed prior result).",
+        content: { "application/json": { schema: PublicSendTurnResponse } },
+      },
+      400: errorResponse("Malformed request body."),
+      402: errorResponse("Insufficient credits to start this turn."),
+      404: errorResponse("Not found (non-leaking — see above)."),
+      409: errorResponse("A run is already active on this chat."),
+      429: errorResponse("Per-API-key rate limit exceeded (`X-RateLimit-*`/`Retry-After` headers set)."),
+      500: errorResponse("The Trigger.dev dispatch call itself failed; the turn was not started."),
+      ...apiKeyErrorResponses("runs:write"),
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/public/v1/chats/{chatId}/messages",
+    tags: ["Public API"],
+    summary: "List a chat's messages (cursor-paginated)",
+    security: [{ ApiKeyAuth: ["chats:read"] }],
+    request: { params: ChatIdParamSchema, query: ListMessagesQuerySchema },
+    responses: {
+      200: {
+        description: "Page of messages, oldest-to-newest within the page.",
+        content: { "application/json": { schema: ListMessagesResponse } },
+      },
+      404: errorResponse("Not found (non-leaking — see above)."),
+      ...apiKeyErrorResponses("chats:read"),
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/public/v1/runs/{runId}",
+    tags: ["Public API"],
+    summary: "Get a run's current status, including its tool invocations",
+    security: [{ ApiKeyAuth: ["runs:read"] }],
+    request: { params: AgentRunIdParamSchema },
+    responses: {
+      200: { description: "The run.", content: { "application/json": { schema: AgentRunDTO } } },
+      404: errorResponse("Not found (non-leaking — see above)."),
+      ...apiKeyErrorResponses("runs:read"),
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/public/v1/runs/{runId}/stream",
+    tags: ["Public API"],
+    summary: "Subscribe to a run's live event stream (SSE)",
+    description:
+      "text/event-stream, not JSON — the individual event shapes are Zod-defined in " +
+      "src/contracts/public-events.ts and documented in full on the streaming guide, since SSE " +
+      "cannot be expressed as an OpenAPI response schema. Resume with the standard `Last-Event-ID` " +
+      "header; never pass the API key as a query parameter.",
+    security: [{ ApiKeyAuth: ["runs:read"] }],
+    request: { params: AgentRunIdParamSchema },
+    responses: {
+      200: { description: "An open `text/event-stream` connection." },
+      404: errorResponse("Not found (non-leaking — see above)."),
+      ...apiKeyErrorResponses("runs:read"),
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/public/v1/runs/{runId}/cancel",
+    tags: ["Public API"],
+    summary: "Cancel an active run",
+    security: [{ ApiKeyAuth: ["runs:write"] }],
+    request: { params: AgentRunIdParamSchema },
+    responses: {
+      200: { description: "Run cancelled.", content: { "application/json": { schema: AgentRunDTO } } },
+      404: errorResponse("Not found (non-leaking — see above)."),
+      ...apiKeyErrorResponses("runs:write"),
+    },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/public/v1/waitpoints/{waitpointId}/respond",
+    tags: ["Public API"],
+    summary: "Respond to a pending CREDIT_APPROVAL or CLARIFICATION waitpoint",
+    description:
+      "Idempotent — a repeat call on an already-resolved waitpoint still returns 200 with the " +
+      "current DTO, never an error.",
+    security: [{ ApiKeyAuth: ["waitpoints:respond"] }],
+    request: {
+      params: WaitpointIdParamSchema,
+      body: { content: { "application/json": { schema: RespondToWaitpointRequestSchema } } },
+    },
+    responses: {
+      200: {
+        description: "Waitpoint resolved.",
+        content: { "application/json": { schema: WaitpointDTO } },
+      },
+      400: errorResponse("Response kind doesn't match this waitpoint's kind, or malformed body."),
+      404: errorResponse("Not found (non-leaking — see above)."),
+      ...apiKeyErrorResponses("waitpoints:respond"),
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/public/v1/me/credits",
+    tags: ["Public API"],
+    summary: "Get the caller's credit balance",
+    description: "available = balance - held, computed at read time — never a stored/cached value.",
+    security: [{ ApiKeyAuth: ["credits:read"] }],
+    responses: {
+      200: { description: "The caller's balance.", content: { "application/json": { schema: CreditBalance } } },
+      ...apiKeyErrorResponses("credits:read"),
+    },
+  });
 
   return registry;
 }
@@ -534,12 +775,15 @@ export function generateOpenApiDocument() {
       title: "VyomFlow API",
       version: "1.0.0",
       description:
-        "Internal REST surface (S1–S6) exposed as reference documentation. This is the S8 " +
-        "minimum-fallback scope (Submission Requirement #13) — generated directly from the " +
-        "same Zod contracts the Route Handlers validate against, not a hand-maintained " +
-        "duplicate. Auth documented here is the app's own Clerk bearer scheme; see the " +
-        "public API-key section for the versioned public surface, where shipped.",
+        "The versioned public REST surface (`/api/public/v1/*`, bearer API-key auth) plus the " +
+        "app's own internal `/api/v1/*` surface (Clerk session-token auth), generated directly " +
+        "from the same Zod contracts the Route Handlers validate against — never a " +
+        "hand-maintained duplicate. The MCP endpoint (`/api/mcp`) is a separate streamable-HTTP " +
+        "JSON-RPC transport, not expressible here — see the MCP guide.",
     },
-    servers: [{ url: "{baseUrl}", variables: { baseUrl: { default: "http://localhost:3000" } } }],
+    servers: [
+      { url: "https://api.vyomflow.co.in", description: "Production" },
+      { url: "http://localhost:3000", description: "Local development" },
+    ],
   });
 }

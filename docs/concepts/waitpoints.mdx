@@ -6,51 +6,59 @@ description: "Waitpoints let a running agent pause and wait for external input b
 
 During a [run](/concepts/runs), the agent may emit a waitpoint when it needs a human response before continuing. This is useful for approval flows, clarifying questions, or any scenario where the agent cannot proceed autonomously.
 
+<Note>
+  This page uses the public, API-key-authenticated surface at `https://api.vyomflow.co.in/api/public/v1` — see [Authentication](/authentication).
+</Note>
+
+## Kinds
+
+There are two kinds of waitpoint, each with its own request/response shape:
+
+- **`CREDIT_APPROVAL`** — the agent wants to run a tool that will consume more credits than the auto-approval threshold. Request payload: `{ toolName, estimatedCredits, threshold }`. You respond with `{ approved: true | false }`.
+- **`CLARIFICATION`** — the agent needs additional information to proceed. Request payload: `{ question, options? }`. You respond with `{ answer: "<text>" }`.
+
 ## When waitpoints appear
 
-The realtime stream emits a waitpoint event that contains a `waitpointId` and a prompt or question. While the waitpoint is open, the run stays in a waiting state. The run resumes only after you respond to the waitpoint or cancel the run.
-
-If you are listening to the realtime stream, watch for an event with the waitpoint details so you can surface the prompt to the user.
+The event stream ([Streaming](/streaming)) emits a `waitpoint.created` event carrying the waitpoint's `id`, `kind`, and request payload. While the waitpoint is open, the run stays in the `waiting` status. The run resumes only after you respond to the waitpoint or cancel the run. A `waitpoint.resolved` event follows once it's answered.
 
 ## Responding to a waitpoint
 
-Send your response to the waitpoint with a single POST call. The run resumes automatically once the API receives it.
+Send your response with a single POST call (requires the `waitpoints:respond` scope). The run resumes automatically once the API receives it. Responding is idempotent — a repeat call on an already-resolved waitpoint still returns `200` with its current state, not an error.
 
 ### Endpoint
 
 ```text
-POST /api/v1/waitpoints/{waitpointId}/respond
-```
-
-### Request body
-
-```json
-{
-  "response": "Yes, proceed with that plan."
-}
+POST /api/public/v1/waitpoints/{waitpointId}/respond
 ```
 
 ### Examples
 
 <CodeGroup>
 
-```bash cURL
-curl -X POST http://localhost:3000/api/v1/waitpoints/wp_abc123/respond \
-  -H "Authorization: Bearer <clerk-session-token>" \
+```bash cURL — CREDIT_APPROVAL
+curl -X POST https://api.vyomflow.co.in/api/public/v1/waitpoints/wp_abc123/respond \
+  -H "Authorization: Bearer $VYOMFLOW_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"response": "Yes, proceed with that plan."}'
+  -d '{"kind": "CREDIT_APPROVAL", "approved": true}'
+```
+
+```bash cURL — CLARIFICATION
+curl -X POST https://api.vyomflow.co.in/api/public/v1/waitpoints/wp_abc123/respond \
+  -H "Authorization: Bearer $VYOMFLOW_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"kind": "CLARIFICATION", "answer": "Yes, proceed with that plan."}'
 ```
 
 ```js JavaScript
 const res = await fetch(
-  'http://localhost:3000/api/v1/waitpoints/wp_abc123/respond',
+  'https://api.vyomflow.co.in/api/public/v1/waitpoints/wp_abc123/respond',
   {
     method: 'POST',
     headers: {
-      Authorization: 'Bearer <clerk-session-token>',
+      Authorization: `Bearer ${process.env.VYOMFLOW_API_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ response: 'Yes, proceed with that plan.' }),
+    body: JSON.stringify({ kind: 'CREDIT_APPROVAL', approved: true }),
   }
 );
 const data = await res.json();
@@ -59,7 +67,7 @@ const data = await res.json();
 </CodeGroup>
 
 <Note>
-  A waitpoint is owned by the same user as its parent run. If you try to respond with a different user's token, the API returns `404 Not Found` instead of `403 Forbidden`.
+  A waitpoint is owned by the same user as its parent run. If you try to respond with a different user's key, the API returns `404 Not Found` instead of `403 Forbidden`.
 </Note>
 
 ## Next steps

@@ -7,6 +7,8 @@
  * even before the parent resumes from `triggerAndWait`.
  */
 import { prisma } from "@/lib/db";
+import { emitWebhookEvent } from "@/server/webhooks/emit";
+import { buildToolCompletedPayload } from "@/server/webhooks/events";
 import type { Prisma, ToolInvocation } from "@/generated/prisma/client";
 import type { ToolInvocationDTO } from "@/contracts/tools";
 
@@ -71,6 +73,31 @@ export async function markToolRunning(toolInvocationId: string): Promise<boolean
  * cancelled/failed) must never flip an already-terminal row. Returns false
  * (a no-op) when the row had already settled.
  */
+/**
+ * S8 Phase 6 — emits `tool.completed` after a genuine settlement (never on
+ * a no-op from a late/duplicate writer). Best-effort: `emitWebhookEvent`
+ * itself never throws, so a webhook problem can never turn a real tool
+ * completion into a reported failure.
+ */
+async function emitToolCompletedWebhook(toolInvocationId: string, creditUsedApp: number): Promise<void> {
+  const invocation = await prisma.toolInvocation.findUnique({
+    where: { id: toolInvocationId },
+    select: { name: true, agentRunId: true, agentRun: { select: { chatId: true, chat: { select: { ownerId: true } } } } },
+  });
+  if (!invocation) return;
+  await emitWebhookEvent({
+    userId: invocation.agentRun.chat.ownerId,
+    eventType: "tool.completed",
+    payload: buildToolCompletedPayload({
+      runId: invocation.agentRunId,
+      chatId: invocation.agentRun.chatId,
+      toolInvocationId,
+      name: invocation.name,
+      creditUsed: creditUsedApp,
+    }),
+  });
+}
+
 export async function markToolCompleted(params: {
   toolInvocationId: string;
   resultUrls: string[];
@@ -97,7 +124,9 @@ export async function markToolCompleted(params: {
       ...(assemblyId !== undefined ? { assemblyId } : {}),
     },
   });
-  return count > 0;
+  const settled = count > 0;
+  if (settled) await emitToolCompletedWebhook(toolInvocationId, creditUsedApp);
+  return settled;
 }
 
 /** Caller-initiated cancellation (e.g. a user Stop) — a distinct terminal status from FAILED, guarded the same way. */

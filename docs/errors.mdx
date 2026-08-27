@@ -4,7 +4,7 @@ description: "Every VyomFlow API error returns a uniform JSON envelope. This pag
 sidebarTitle: "Errors"
 ---
 
-Every error in the VyomFlow API uses the same JSON envelope, so you can write one handler for all failure paths. The envelope contains an error code you can switch on, a human-readable message, and a details field reserved for future structured metadata.
+Every error in the VyomFlow API uses the same JSON envelope, so you can write one handler for all failure paths. The envelope contains an error code you can switch on, a human-readable message, and — for some error codes only — a `details` field with structured validation metadata.
 
 ## Error envelope
 
@@ -12,19 +12,23 @@ Every error in the VyomFlow API uses the same JSON envelope, so you can write on
 {
   "error": {
     "code": "NOT_FOUND",
-    "message": "Not found.",
-    "details": null
+    "message": "Not found."
   }
 }
 ```
+
+<Note>
+  `details` is omitted entirely when there is nothing to report — it is never sent as `null`. Only `BAD_REQUEST` and `CONFLICT` populate it (for example, with Zod's flattened validation errors); every other error code omits the key.
+</Note>
 
 ## Status codes and error codes
 
 | HTTP Status | Code | Meaning | What to do |
 | --- | --- | --- | --- |
 | 400 | `BAD_REQUEST` | Request body or query failed validation | Check your request body against the schema |
-| 401 | `UNAUTHORIZED` | Missing or invalid Authorization header | Refresh your Clerk token and retry |
+| 401 | `UNAUTHORIZED` | Missing, invalid, expired, or revoked credential | Session callers: refresh your Clerk token. API-key callers: check the key is valid and unrevoked |
 | 402 | `INSUFFICIENT_CREDITS` | Not enough credit balance | Check your balance; reduce message complexity |
+| 403 | `FORBIDDEN` | Valid API key, but missing a required scope | Add the missing scope to the key (see [Authentication](/authentication)) |
 | 404 | `NOT_FOUND` | Resource does not exist or belongs to another user | Verify the resource id and that you own it |
 | 409 | `CONFLICT` | Request conflicts with current state (for example, a run is already active) | Wait for the active run to complete before sending another message |
 | 429 | `RATE_LIMITED` | Per-user send-rate limit exceeded | Retry after a short wait |

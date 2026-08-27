@@ -1,0 +1,254 @@
+---
+title: "Stream a Run's Output"
+sidebarTitle: "Streaming"
+description: "Server-Sent Events reference for GET /api/public/v1/runs/{runId}/stream — event types, resume semantics, reconnect protocol, and heartbeat behavior."
+---
+
+`GET /api/public/v1/runs/{runId}/stream` is the primary live-transport for a turn's output. It requires the `runs:read` scope — see [Authentication](/authentication) for how scopes and bearer keys work. This page assumes you already have a `runId` from [sending a message](/quickstart#step-2).
+
+```text
+GET https://api.vyomflow.co.in/api/public/v1/runs/{runId}/stream
+```
+
+<Warning>
+  `Authorization` must be sent as a header, never a query parameter — no public route accepts a key via query string. This rules out the browser's native `EventSource` API, which cannot attach custom headers. Use a `fetch`-based SSE client instead (example below), or a header-capable `EventSource` polyfill if one already exists in your stack. VyomFlow does not ship its own SSE client library — the example below is plain `fetch` + `ReadableStream`.
+</Warning>
+
+## Minimal client example
+
+```javascript
+const res = await fetch(
+  `https://api.vyomflow.co.in/api/public/v1/runs/${runId}/stream`,
+  { headers: { Authorization: `Bearer ${process.env.VYOMFLOW_API_KEY}` } },
+);
+
+const reader = res.body.getReader();
+const decoder = new TextDecoder();
+let buffer = "";
+
+while (true) {
+  const { value, done } = await reader.read();
+  if (done) break;
+  buffer += decoder.decode(value, { stream: true });
+
+  // SSE frames are separated by a blank line.
+  const frames = buffer.split("\n\n");
+  buffer = frames.pop(); // keep the last (possibly incomplete) frame
+
+  for (const frame of frames) {
+    if (!frame || frame.startsWith(":")) continue; // comment (heartbeat/connected)
+    const lines = frame.split("\n");
+    const event = lines.find((l) => l.startsWith("event: "))?.slice(7);
+    const data = lines.find((l) => l.startsWith("data: "))?.slice(6);
+    const id = lines.find((l) => l.startsWith("id: "))?.slice(4);
+    if (event && data) console.log(event, JSON.parse(data), "id:", id);
+  }
+}
+```
+
+A production client should also handle reconnects — see [Reconnect protocol](#reconnect-protocol) below.
+
+## Manual testing with curl
+
+```bash
+curl -N --http1.1 \
+  -H "Authorization: Bearer $VYOMFLOW_API_KEY" \
+  https://api.vyomflow.co.in/api/public/v1/runs/$RUN_ID/stream
+```
+
+`--http1.1` is recommended for manual testing: the 15-second heartbeat (below) exists specifically because idle HTTP/1.1 connections get dropped by intermediaries, and forcing HTTP/1.1 with curl reproduces the exact framing behavior the heartbeat is protecting against.
+
+## Event types
+
+Every data event's SSE frame has the shape:
+
+```text
+id: <streamIndex>
+event: <eventName>
+data: <JSON payload>
+```
+
+The `id:` field carries the event's stream index and becomes the `Last-Event-ID` a reconnecting client sends back — see [Resume semantics](#resume-semantics).
+
+| Event | Sent when |
+| --- | --- |
+| `run.status` | Once per connection, immediately after the `: connected` comment — a snapshot of current run state |
+| `message.delta` | An incremental chunk of assistant text or reasoning |
+| `tool.status` | A tool invocation's status changes |
+| `waitpoint.created` | A waitpoint (e.g. credit approval) is now pending |
+| `waitpoint.resolved` | A previously pending waitpoint was answered |
+| `run.completed` | Terminal — the run finished successfully; closes the stream |
+| `run.failed` | Terminal — the run failed; closes the stream |
+| `run.cancelled` | Terminal — the run was cancelled; closes the stream |
+| `stream.reset` | The server is gracefully closing this connection at the duration limit — reconnect, this is expected |
+
+### `run.status`
+
+```json
+{
+  "runId": "run_01JXYZABCDEF1234567890",
+  "status": "running",
+  "lastStreamIndex": 12,
+  "cancelRequestedAt": null
+}
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `runId` | string | |
+| `status` | enum | One of `queued`, `running`, `waiting`, `completed`, `failed`, `cancelled` |
+| `lastStreamIndex` | integer | A reconciliation cursor (a persistence checkpoint) — **not** the resume point for a fresh subscriber. Never compute your resume position from this field; see [Resume semantics](#resume-semantics). |
+| `cancelRequestedAt` | string \| null | ISO timestamp if a cancel was requested |
+
+### `message.delta`
+
+```json
+{ "index": 4, "channel": "text", "delta": "Hello" }
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `index` | integer | Stream index of this part |
+| `channel` | `"text"` \| `"reasoning"` | |
+| `delta` | string | Incremental chunk to append |
+
+### `tool.status`
+
+```json
+{
+  "index": 6,
+  "toolInvocationId": "tinv_01JXYZ1111111111111111",
+  "toolCallId": "call_abc123",
+  "name": "magica_crop_image",
+  "turnIndex": 0,
+  "callIndex": 0,
+  "status": "running",
+  "creditUsed": 0.5,
+  "resultUrls": ["https://..."],
+  "errorMessage": null
+}
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `index` | integer | Stream index of this part |
+| `toolInvocationId` | string | Stable per tool call — distinguishes parallel calls |
+| `toolCallId` | string | |
+| `name` | string | Tool name |
+| `turnIndex` | integer | Ordering key component |
+| `callIndex` | integer | Ordering key component |
+| `status` | enum | `ToolInvocation` status |
+| `creditUsed` | number | Optional |
+| `resultUrls` | string[] | Optional |
+| `errorMessage` | string | Optional |
+
+<Note>
+  Ordering key is `(turnIndex, callIndex)` — never array position or arrival order. Parallel tool calls in the same turn are always separate `tool.status` events keyed by `toolInvocationId`, never collapsed into one field. For example, two tools dispatched in parallel in the same turn produce two independent events:
+
+  ```json
+  { "toolInvocationId": "tinv_A", "turnIndex": 2, "callIndex": 0, "name": "magica_crop_image", "status": "running", "index": 9, "toolCallId": "call_A" }
+  { "toolInvocationId": "tinv_B", "turnIndex": 2, "callIndex": 1, "name": "gpt_image_2", "status": "running", "index": 10, "toolCallId": "call_B" }
+  ```
+
+  Group and order your UI by `(turnIndex, callIndex)`, and key rows by `toolInvocationId` — never assume delivery order reflects call order.
+</Note>
+
+### `waitpoint.created` / `waitpoint.resolved`
+
+```json
+{
+  "index": 8,
+  "waitpoint": {
+    "id": "wp_01JXYZ2222222222222222",
+    "status": "PENDING",
+    "kind": "CREDIT_APPROVAL"
+  }
+}
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `index` | integer | Stream index of this part |
+| `waitpoint` | object | Full waitpoint DTO; `waitpoint.status` (`PENDING` vs. resolved) determines which event name is sent |
+
+### `run.completed` / `run.failed` / `run.cancelled`
+
+```json
+{
+  "runId": "run_01JXYZABCDEF1234567890",
+  "status": "completed",
+  "assistantMessageId": "msg_01JXYZ0987654321FEDCBA",
+  "totalCreditsUsed": 1.5,
+  "errorCode": null,
+  "errorMessage": null
+}
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `runId` | string | |
+| `status` | enum | `completed` \| `failed` \| `cancelled` |
+| `assistantMessageId` | string \| null | |
+| `totalCreditsUsed` | number | |
+| `errorCode` | string \| null | Optional, populated on failure |
+| `errorMessage` | string \| null | Optional, populated on failure |
+
+Any of these three events is terminal: the server closes the connection immediately after sending it.
+
+### `stream.reset`
+
+```json
+{ "reason": "duration_limit", "nextFromIndex": 137 }
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `reason` | `"duration_limit"` | Only reason currently emitted |
+| `nextFromIndex` | integer | Resume position for your next connection |
+
+See [Long-turn reconnect](#long-turn-reconnect-is-expected-protocol) below — this is not an error condition.
+
+## Resume semantics
+
+A reconnecting client should send the last event id it received as a `Last-Event-ID` request header. The server resumes from `parsedLastEventId + 1`.
+
+A **fresh** subscriber (no `Last-Event-ID` header) resumes from the `?fromIndex=` query parameter, defaulting to `0` if omitted. This is explicitly **not** `lastStreamIndex + 1` from a `run.status` snapshot — `lastStreamIndex` is a reconciliation cursor only, never a default resume point. `fromIndex` in the query string only matters for a client resuming a session it already has a cursor for (e.g. after receiving `stream.reset`'s `nextFromIndex`); it carries no credential weight, since the `Authorization` header is the only accepted credential location — `?access_token=` is never accepted.
+
+| Scenario | Resume position |
+| --- | --- |
+| Fresh subscriber, no query param | `fromIndex=0` (start of the run) |
+| Fresh subscriber, `?fromIndex=N` | `N` |
+| Reconnect with `Last-Event-ID: N` header | `N + 1` (header takes precedence over the query param) |
+
+## Reconnect protocol
+
+### Long-turn reconnect is expected protocol
+
+The route runs with `maxDuration=300` (the Vercel Fluid-compute ceiling for this runtime). The server proactively closes the connection at 285 seconds — well before Vercel would cut it mid-frame — by sending a `stream.reset` event (`{"reason": "duration_limit", "nextFromIndex": ...}`), then an SSE `retry: 1000` directive, then closing.
+
+If your turn involves a long-running tool call (e.g. a media-generation tool), crossing this 285-second boundary is expected, not a bug. The correct client behavior is to reconnect using `Last-Event-ID` (or `?fromIndex=<nextFromIndex>`) and keep consuming — the run keeps executing server-side throughout; nothing is lost or restarted.
+
+### Heartbeat
+
+The server sends a `: ping` SSE comment every 15 seconds to keep intermediary connections (proxies, load balancers) from treating the connection as idle and dropping it. This matters most over HTTP/1.1, where idle connections are more aggressively reaped by intermediaries than over HTTP/2 — see the `curl -N --http1.1` note above for reproducing this locally.
+
+### Terminal-before-connect
+
+If the run is already in a terminal status (`completed`, `failed`, or `cancelled`) at the moment the stream connection opens, the server sends the `run.status` snapshot, then immediately the corresponding terminal event, and closes. It does not attempt to subscribe to a finished run's live output — a finished run has nothing left to emit, and subscribing anyway would hang against the underlying realtime provider's own read timeout instead of returning promptly.
+
+## Live transport vs. REST recovery
+
+SSE is the only live transport for a run — this endpoint re-emits events via Trigger.dev Realtime. Polling is never the primary mechanism for consuming a run's progress.
+
+`GET /api/public/v1/runs/{runId}` (REST) exists as a recovery/reconciliation fallback: use it after a stream disconnect you don't want to reconnect from, or to confirm a run's final `status` and `totalCreditsUsed` after the fact. Do not poll it in a loop during normal operation — reconnect the SSE stream instead.
+
+## CORS
+
+This route is public CORS (`Access-Control-Allow-Origin: *`), since bearer auth carries no ambient credential for an arbitrary origin to ride on. See [Authentication's security model](/authentication#security-model) for the full reasoning.
+
+## Related
+
+- [Authentication](/authentication) — scopes, key lifecycle, 401 vs. 403
+- [Quickstart](/quickstart) — end-to-end flow from creating a chat through streaming a response
+- [MCP](/mcp) — connecting an MCP client directly instead of consuming SSE yourself
+- [Webhooks](/webhooks) — an alternative to polling/streaming if you want push notifications on run completion

@@ -28,22 +28,35 @@ The VyomFlow API is a REST backend for AI agent chat products. It handles chats,
 
 - **Conversational agents** that maintain context across multi-turn chats
 - **Multi-turn chats with file attachments** uploaded before or during a conversation
-- **Real-time streamed responses** via Trigger.dev realtime tokens, so users see output as it generates
+- **Real-time streamed responses** via a server-sent-events endpoint, so users see output as it generates
 - **Tool-call orchestration with credits**, where tool calls (image generation, cropping, video merging) draw from balance and LLM usage via OpenRouter free tier costs zero application credits
+- **MCP access**, so an MCP-capable client (Claude Code, Claude Desktop) can create chats, send messages, and respond to approvals as tools
 
 ## How it works
 
 <Steps>
   <Step title="Create a chat">
-    Start a new conversation by calling `POST /api/v1/chats`. The API returns a chat ID you will use for every subsequent message.
+    Start a new conversation by calling `POST /api/public/v1/chats`. The API returns a chat ID you will use for every subsequent message.
   </Step>
   <Step title="Send a message">
-    Post to `POST /api/v1/chats/{chatId}/messages`. This reserves credit admission upfront and kicks off an agent run.
+    Post to `POST /api/public/v1/chats/{chatId}/messages`. This reserves credit admission upfront and kicks off an agent run.
   </Step>
   <Step title="Stream the run's output">
-    Request a realtime token from `GET /api/v1/runs/{runId}/realtime-token` and open a stream so users see the agent response as it arrives.
+    Open `GET /api/public/v1/runs/{runId}/stream` so users see the agent response as it arrives. See [Streaming](/streaming).
   </Step>
   <Step title="Respond to waitpoints">
-    If the agent pauses for input, call `POST /api/v1/waitpoints/{waitpointId}/respond` to supply the missing information and resume the run.
+    If the agent pauses for input, call `POST /api/public/v1/waitpoints/{waitpointId}/respond` to supply the missing information and resume the run.
   </Step>
 </Steps>
+
+## Surfaces
+
+VyomFlow runs across three production domains, each with a distinct role:
+
+| Domain | Role |
+| --- | --- |
+| `https://www.vyomflow.co.in` | The first-party browser app. Authenticated with a Clerk session cookie/token. |
+| `https://api.vyomflow.co.in` | The API: public REST (`/api/public/v1/*`, API-key auth), MCP (`/api/mcp`, API-key auth), and the existing internal API (`/api/v1/*`, session-token only — used by the first-party app). |
+| `https://docs.vyomflow.co.in` | This documentation site, including the API Reference playground. It talks to the API over `/api/public/v1/*` with a bearer API key you paste in. |
+
+The apex domain (`https://vyomflow.co.in`) redirects to `https://www.vyomflow.co.in`.

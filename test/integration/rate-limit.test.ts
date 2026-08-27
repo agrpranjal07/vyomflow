@@ -7,7 +7,7 @@ describe("application-level send rate limit", () => {
   it("allows up to the configured threshold within one window", async () => {
     const userId = "user_rate_1";
     for (let i = 0; i < RATE_LIMIT_MAX_SENDS; i++) {
-      await expect(checkAndIncrementRateLimit(userId)).resolves.toBeUndefined();
+      await expect(checkAndIncrementRateLimit(userId)).resolves.toMatchObject({ limit: RATE_LIMIT_MAX_SENDS });
     }
   });
 
@@ -32,6 +32,6 @@ describe("application-level send rate limit", () => {
       await checkAndIncrementRateLimit(a);
     }
     // b's own window is untouched by a's usage.
-    await expect(checkAndIncrementRateLimit(b)).resolves.toBeUndefined();
+    await expect(checkAndIncrementRateLimit(b)).resolves.toMatchObject({ remaining: RATE_LIMIT_MAX_SENDS - 1 });
   });
 });

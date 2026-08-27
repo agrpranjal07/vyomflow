@@ -4,11 +4,20 @@ description: "The VyomFlow API enforces per-user send-rate limits on message sub
 sidebarTitle: "Rate Limits"
 ---
 
-Message submission in the VyomFlow API is rate-limited per authenticated user on a fixed time window. When you exceed the limit, the API returns `429 RATE_LIMITED` immediately without consuming provider quota or credits.
+Sending a message (`POST /api/public/v1/chats/{chatId}/messages`) is rate-limited on a fixed time window. On the public API, the bucket is your API key's own id — not your account — so two keys belonging to the same user throttle independently, and one key can't exhaust the other's budget. When you exceed the limit, the API returns `429 RATE_LIMITED` immediately without consuming provider quota or credits.
 
 ## How it works
 
 The limit is enforced before any provider call. A rate-limited request never reaches the LLM, never triggers a tool call, and never reserves or spends credits. This protects shared provider budgets from accidental or runaway client loops.
+
+Every send response — success or `429` — carries these headers:
+
+| Header | Meaning |
+| --- | --- |
+| `X-RateLimit-Limit` | Max sends allowed in the current window |
+| `X-RateLimit-Remaining` | Sends left in the current window |
+| `X-RateLimit-Reset` | Unix epoch seconds when the window resets |
+| `Retry-After` | Seconds to wait before retrying — only present on `429` |
 
 If you are rate limited, the response body follows the standard [error envelope](/errors):
 
@@ -16,8 +25,7 @@ If you are rate limited, the response body follows the standard [error envelope]
 {
   "error": {
     "code": "RATE_LIMITED",
-    "message": "Rate limit exceeded.",
-    "details": null
+    "message": "You're sending too fast — please wait a moment and try again."
   }
 }
 ```

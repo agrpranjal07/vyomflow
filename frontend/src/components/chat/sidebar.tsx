@@ -12,6 +12,7 @@ import {
   IconCreditCard,
   IconDeviceDesktop,
   IconDotsVertical,
+  IconKey,
   IconLayoutSidebar,
   IconMessage,
   IconMoon,
@@ -45,10 +46,10 @@ const SHORTCUT_HINT_NEW_TASK = "Ctrl+Shift+O";
 // S8: public API/Mintlify docs link (reference sidebar row "API / MCP",
 // sidebar.md evidence). External, unauthenticated, opens in a new tab —
 // unlike Tasks/Library this never goes through handleNavGuarded. Falls back
-// to the live Mintlify site (S8-public-api-bonus.md) so NEXT_PUBLIC_API_DOCS_URL
-// only needs to be set to override it.
+// to the live docs site so NEXT_PUBLIC_API_DOCS_URL only needs to be set to
+// override it.
 const API_DOCS_URL =
-  process.env.NEXT_PUBLIC_API_DOCS_URL ?? "https://vyom-flow.mintlify.site/";
+  process.env.NEXT_PUBLIC_API_DOCS_URL ?? "https://docs.vyomflow.co.in";
 
 // Icon order matches the reference: system → light → dark (audit finding #12).
 const THEME_OPTIONS = [
@@ -380,6 +381,22 @@ export function Sidebar({ forceExpanded = false }: { forceExpanded?: boolean } =
               />
               <TooltipContent>API / MCP</TooltipContent>
             </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    aria-label="API Keys"
+                    onClick={() => handleNavGuarded("/settings/api-keys")}
+                  >
+                    <IconKey size={16} />
+                  </Button>
+                }
+              />
+              <TooltipContent>API Keys</TooltipContent>
+            </Tooltip>
           </div>
         ) : (
           <>
@@ -424,6 +441,16 @@ export function Sidebar({ forceExpanded = false }: { forceExpanded?: boolean } =
               <IconApiBook size={16} />
               API / MCP
             </a>
+            {/* Internal nav row — same handleNavGuarded pattern as Tasks/Library — to
+                this app's own key-management page (Clerk's <APIKeys /> mounted at
+                /settings/api-keys), distinct from the external docs link above. */}
+            <button
+              onClick={() => handleNavGuarded("/settings/api-keys")}
+              className="group flex h-[var(--layout-sidebar-row-height)] w-full items-center gap-2 rounded-sm px-2 text-sm font-medium text-text-secondary hover:bg-accent disabled:opacity-50"
+            >
+              <IconKey size={16} />
+              API Keys
+            </button>
           </>
         )}
       </div>

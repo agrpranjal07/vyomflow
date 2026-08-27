@@ -26,10 +26,11 @@ model User {
   creditHeld    Decimal  @default(0) @db.Decimal(12, 4)
   createdAt     DateTime @default(now())
 
-  chats        Chat[]
-  creditLedger CreditLedger[]
-  creditHolds  CreditHold[]
-  attachments  Attachment[]
+  chats            Chat[]
+  creditLedger     CreditLedger[]
+  creditHolds      CreditHold[]
+  attachments      Attachment[]
+  webhookEndpoints WebhookEndpoint[]
 
   @@map("users")
 }
@@ -326,13 +327,59 @@ model CreditLedger {
 // Application-level per-user send-rate limiting (S2-streaming-turn.md —
 // distinct from, and in addition to, OpenRouter's own upstream 429s). Fixed
 // window, single indexed table — no Redis/Upstash at this scale.
+//
+// `subject` (S8 public API): generalized from `userId` so a public API key
+// can be throttled on its own bucket (subject = apiKeyId) independent of
+// the same human's browser session (subject = userId) — see
+// services/rate-limit.ts.
 model RateLimitWindow {
-  userId      String
+  subject     String
   windowStart DateTime
   count       Int      @default(0)
 
-  @@unique([userId, windowStart])
+  @@unique([subject, windowStart])
   @@map("rate_limit_windows")
+}
+
+// S8 Phase 6 — one row per user (never per-event-type: an endpoint receives
+// every emitted event). `secondarySecret` is the rotation slot: `secret` is
+// always the one live signing key; rotating moves the old `secret` into
+// `secondarySecret` (documented as still-valid for a grace window) and
+// issues a fresh `secret` — see services/webhooks.ts. `@@unique([userId])`
+// enforces the "one row per user" rule the plan requires at the DB level,
+// not just by application convention.
+model WebhookEndpoint {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  url             String
+  secret          String
+  secondarySecret String?
+  enabled         Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  deliveries WebhookDelivery[]
+
+  @@map("webhook_endpoints")
+}
+
+// Attempt-tracking row per outbound webhook delivery. `eventId` is the
+// receiver-facing dedupe key (unique — one delivery record per event).
+model WebhookDelivery {
+  id             String    @id @default(cuid())
+  endpointId     String
+  endpoint       WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  eventId        String    @unique
+  eventType      String
+  payload        Json
+  attempt        Int       @default(0)
+  status         String // "pending" | "delivered" | "dead"
+  lastStatusCode Int?
+  createdAt      DateTime  @default(now())
+  deliveredAt    DateTime?
+
+  @@map("webhook_deliveries")
 }
 
 // S3 — one row per model tool call the agent makes within a turn
