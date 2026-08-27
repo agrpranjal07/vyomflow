@@ -32,15 +32,31 @@ export function EmptyState() {
   // frontend #3 — no send-level idempotency key exists to dedupe the send
   // itself, so this only closes the orphan-chat half of the gap).
   const pendingChatIdRef = useRef<string | null>(null);
+  // Caches the in-flight create *promise*, not just its resolved id — two
+  // handleFirstMessage calls fired in the same tick (e.g. a double-submit
+  // before React re-renders `sending`) would otherwise both read
+  // pendingChatIdRef.current as null and both call createChat, minting two
+  // chats for one send. Awaiting the same promise from both callers closes
+  // that window; pendingChatIdRef.current alone only covers the *already
+  // resolved* case.
+  const creatingChatRef = useRef<Promise<string> | null>(null);
 
   // Only the first *send* creates the chat — attaching a file must not.
   // The attachment hook gets a read-only resolver (never creates); send
   // uses `ensureChatId`, which creates once and is reused by any later
   // send in the same still-pending chat.
   const ensureChatId = useCallback(async () => {
-    const chatId = pendingChatIdRef.current ?? (await createChat.mutateAsync({})).id;
-    pendingChatIdRef.current = chatId;
-    return chatId;
+    if (pendingChatIdRef.current) return pendingChatIdRef.current;
+    if (!creatingChatRef.current) {
+      creatingChatRef.current = createChat.mutateAsync({}).then((chat) => chat.id);
+    }
+    try {
+      const chatId = await creatingChatRef.current;
+      pendingChatIdRef.current = chatId;
+      return chatId;
+    } finally {
+      creatingChatRef.current = null;
+    }
   }, [createChat]);
   const getChatIdForAttachments = useCallback(async () => pendingChatIdRef.current ?? undefined, []);
   const attachments = useAttachments(getChatIdForAttachments);

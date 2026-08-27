@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { testDb } from "../support/db";
 import { reliabilitySweep } from "@/trigger/sweep";
 import { reserveHold } from "@/services/credits";
-import { RUN_STALE_AFTER_MS, CANCEL_GRACE_MS, TOOL_ORPHAN_TIMEOUT_MS } from "@/lib/config";
+import { RUN_STALE_AFTER_MS, CANCEL_GRACE_MS, TOOL_ORPHAN_TIMEOUT_MS, EMPTY_CHAT_ORPHAN_TIMEOUT_MS } from "@/lib/config";
 import { reconcileIfStale } from "@/services/runs";
 
 // `schedules.task` is mocked as a pass-through (../support/trigger-sdk-mock),
@@ -235,5 +235,47 @@ describe("reliabilitySweep — orphaned ToolInvocation dispatch (§7.3 item 2/3,
 
     const untouched = await testDb.toolInvocation.findUniqueOrThrow({ where: { id: invocation.id } });
     expect(untouched.status).toBe("RUNNING");
+  });
+});
+
+describe("reliabilitySweep — orphaned empty-chat cleanup", () => {
+  it("hard-deletes a message-less chat older than EMPTY_CHAT_ORPHAN_TIMEOUT_MS", async () => {
+    const user = await makeUser("user_sweep_empty_chat_old");
+    const chat = await testDb.chat.create({ data: { ownerId: user.id, title: "t" } });
+    await testDb.$executeRawUnsafe(
+      `UPDATE "chats" SET "createdAt" = $1 WHERE id = $2`,
+      new Date(Date.now() - (EMPTY_CHAT_ORPHAN_TIMEOUT_MS + 5_000)),
+      chat.id,
+    );
+
+    await runSweep();
+
+    const afterSweep = await testDb.chat.findUnique({ where: { id: chat.id } });
+    expect(afterSweep).toBeNull();
+  });
+
+  it("leaves a fresh message-less chat (well under the timeout) untouched", async () => {
+    const user = await makeUser("user_sweep_empty_chat_fresh");
+    const chat = await testDb.chat.create({ data: { ownerId: user.id, title: "t" } });
+
+    await runSweep();
+
+    const afterSweep = await testDb.chat.findUnique({ where: { id: chat.id } });
+    expect(afterSweep).not.toBeNull();
+  });
+
+  it("never deletes a chat with a message, no matter how old", async () => {
+    const user = await makeUser("user_sweep_chat_with_message_old");
+    const { chat } = await makeChatAndRun(user.id);
+    await testDb.$executeRawUnsafe(
+      `UPDATE "chats" SET "createdAt" = $1 WHERE id = $2`,
+      new Date(Date.now() - (EMPTY_CHAT_ORPHAN_TIMEOUT_MS + 5_000)),
+      chat.id,
+    );
+
+    await runSweep();
+
+    const afterSweep = await testDb.chat.findUnique({ where: { id: chat.id } });
+    expect(afterSweep).not.toBeNull();
   });
 });
