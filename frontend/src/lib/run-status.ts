@@ -141,6 +141,7 @@ function resolveToolWithRestOverlay(
       creditUsed: rest.creditUsed ?? undefined,
       resultUrls: rest.resultUrls ?? undefined,
       errorMessage: rest.errorMessage ?? undefined,
+      errorCode: rest.errorCode ?? undefined,
     };
   }
   return tool;
@@ -157,6 +158,7 @@ function restOnlyToolState(id: string, rest: ToolInvocationDTO, index: number): 
     creditUsed: rest.creditUsed ?? undefined,
     resultUrls: rest.resultUrls ?? undefined,
     errorMessage: rest.errorMessage ?? undefined,
+    errorCode: rest.errorCode ?? undefined,
   };
 }
 

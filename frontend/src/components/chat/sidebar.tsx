@@ -30,6 +30,7 @@ import { LogoWordmark } from "@/components/brand/logo-wordmark";
 import { LogoMark } from "@/components/brand/logo-mark";
 import { useChatsList, useDeleteChat, useRenameChat, useSetChatPinned } from "@/hooks/use-chats";
 import { useCredits } from "@/hooks/use-credits";
+import { useCreditPaywall } from "@/components/credits/paywall-provider";
 import { useUiStore } from "@/stores/ui";
 import { cn } from "@/lib/utils";
 import { formatCredits } from "@/lib/format";
@@ -78,9 +79,10 @@ const THEME_OPTIONS = [
  */
 export function SidebarCreditBlock() {
   const { data, isLoading, isError } = useCredits();
+  const { open: openPaywall } = useCreditPaywall();
 
   function handleAddCredits() {
-    toast.info("Adding credits isn't available in this build.");
+    openPaywall("message");
   }
 
   return (

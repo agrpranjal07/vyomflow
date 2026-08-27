@@ -8,6 +8,8 @@ import Transloadit from "@uppy/transloadit";
 import { useApiClient } from "@/hooks/use-api-client";
 import * as attachmentsService from "@/services/attachments";
 import { ApiError } from "@/lib/api-client";
+import { isInsufficientCredits } from "@/lib/credit-errors";
+import { useCreditPaywall } from "@/components/credits/paywall-provider";
 import {
   ALLOWED_ATTACHMENT_MIME_TYPES,
   MAX_ATTACHMENT_BYTES,
@@ -55,6 +57,7 @@ function humanSize(bytes: number): string {
  */
 export function useAttachments(getChatId: () => Promise<string | undefined>) {
   const fetcher = useApiClient();
+  const { open: openPaywall } = useCreditPaywall();
   const [items, setItems] = useState<AttachmentItem[]>([]);
   // attachmentId -> live Uppy instance, kept only while its single upload is in flight (for cancel).
   const uppyInstances = useRef(new Map<string, Uppy>());
@@ -187,12 +190,16 @@ export function useAttachments(getChatId: () => Promise<string | undefined>) {
           runUpload(upload.attachmentId, valid[i]!, upload.params, upload.signature);
         });
       } catch (err) {
-        toast.warning("Couldn't start upload", {
-          description: err instanceof ApiError ? err.message : "Please try again.",
-        });
+        if (isInsufficientCredits(err)) {
+          openPaywall("upload");
+        } else {
+          toast.warning("Couldn't start upload", {
+            description: err instanceof ApiError ? err.message : "Please try again.",
+          });
+        }
       }
     },
-    [fetcher, getChatId, items.length, runUpload],
+    [fetcher, getChatId, items.length, runUpload, openPaywall],
   );
 
   /** Adds an already-READY attachment picked from the media library (no upload needed). */

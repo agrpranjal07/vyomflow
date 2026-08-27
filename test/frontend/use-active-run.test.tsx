@@ -4,6 +4,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useActiveRun } from "@/hooks/use-active-run";
 import * as runsService from "@/services/runs";
+import { CreditPaywallProvider } from "@/components/credits/paywall-provider";
+
+// useActiveRun only needs useCreditPaywall()'s context to be present here —
+// these tests don't exercise the dialog's own rendering (see
+// credit-paywall-dialog.test.tsx for that), so stub it out rather than pull
+// in @base-ui/react's Dialog (not safely renderable in this workspace's RTL
+// environment, mocks/ui-dialog.tsx) and a real useCredits() fetch.
+vi.mock("@/components/credits/credit-paywall-dialog", () => ({
+  CreditPaywallDialog: () => null,
+}));
 import {
   __mockReset,
   __setStreamState,
@@ -66,7 +76,11 @@ function makeRealtime(overrides: Partial<RealtimeAccess> = {}): RealtimeAccess {
 
 function wrapper({ children }: { children: ReactNode }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={client}>
+      <CreditPaywallProvider>{children}</CreditPaywallProvider>
+    </QueryClientProvider>
+  );
 }
 
 /**

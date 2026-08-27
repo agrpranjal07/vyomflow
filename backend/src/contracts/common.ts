@@ -60,6 +60,7 @@ export const ToolResultBlockSchema = z.object({
   creditUsed: z.number().nonnegative().optional(),
   resultUrls: z.array(z.url()).optional(),
   errorMessage: z.string().optional(),
+  errorCode: z.string().optional(),
 });
 export const ReasoningBlockSchema = z.object({ type: z.literal("reasoning"), text: z.string() });
 export const CitationBlockSchema = z.object({

@@ -224,6 +224,31 @@ describe("requestUploadParams / POST /upload-params", () => {
     expect(await testDb.attachment.count({ where: { ownerId: userId } })).toBe(seedSizes.length);
   });
 
+  // Uploads exist only to feed paid tools — a spent-out user must not be
+  // able to attach files they can never use (see credit-paywall plan).
+  it("rejects a batch at zero available credit balance with 402 INSUFFICIENT_CREDITS, writing nothing", async () => {
+    const { userId, chat } = await makeUserAndChat("user_up_nocredit");
+    await testDb.user.update({ where: { id: userId }, data: { creditBalance: 0 } });
+
+    const res = await mintUploadParams("user_up_nocredit", {
+      chatId: chat.id,
+      files: [{ fileName: "a.png", mimeType: "image/png", byteSize: 1024 }],
+    });
+    expect(res.status).toBe(402);
+    const body = await res.json();
+    expect(body.error.code).toBe("INSUFFICIENT_CREDITS");
+    expect(await testDb.attachment.count({ where: { ownerId: userId } })).toBe(0);
+  });
+
+  it("still mints upload params for a user with a positive balance", async () => {
+    const { chat } = await makeUserAndChat("user_up_hascredit");
+    const res = await mintUploadParams("user_up_hascredit", {
+      chatId: chat.id,
+      files: [{ fileName: "a.png", mimeType: "image/png", byteSize: 1024 }],
+    });
+    expect(res.status).toBe(201);
+  });
+
   // Bug fix (B): the quota check + create must run inside one Serializable
   // transaction — two concurrent batches that each individually fit under
   // the monthly cap, but together exceed it, must not both commit (a

@@ -224,6 +224,7 @@ function buildSseStream(run: AgentRun, startIndex: number): ReadableStream<Uint8
           creditUsed: part.creditUsed,
           resultUrls: part.resultUrls,
           errorMessage: part.errorMessage,
+          errorCode: part.errorCode,
         };
       }
 

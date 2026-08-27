@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useActiveRun } from "@/hooks/use-active-run";
@@ -7,6 +7,7 @@ import { creditKeys } from "@/hooks/use-credits";
 import * as runsService from "@/services/runs";
 import { __mockReset, __setStreamState } from "./mocks/trigger-react-hooks";
 import type { AgentRunDTO, RealtimeAccess } from "@/contracts/runs";
+import { CreditPaywallProvider } from "@/components/credits/paywall-provider";
 
 // S7 §5.3/§9.2 T8/T9/T11 — credits invalidation must be realtime-driven
 // (run finalize + deduped per-tool-terminal transition), never polling.
@@ -17,6 +18,16 @@ vi.mock("@/services/runs", () => ({
   getRun: vi.fn(),
   getRealtimeToken: vi.fn(),
   cancelRun: vi.fn(),
+}));
+// Only the provider's open()/dedup logic is under test here, not the real
+// dialog's own rendering (@base-ui/react's Dialog isn't safely renderable
+// in this workspace's RTL environment — see mocks/ui-dialog.tsx). This
+// stand-in reflects `open`/`reason` onto the DOM so a test can assert the
+// provider actually triggered the paywall without rendering base-ui.
+vi.mock("@/components/credits/credit-paywall-dialog", () => ({
+  CreditPaywallDialog: ({ open, reason }: { open: boolean; reason: string | null }) => (
+    <div data-testid="paywall-probe" data-open={open} data-reason={reason ?? ""} />
+  ),
 }));
 
 function makeRun(overrides: Partial<AgentRunDTO> = {}): AgentRunDTO {
@@ -51,7 +62,11 @@ function setStream(next: Parameters<typeof __setStreamState>[0]) {
 
 let client: QueryClient;
 function wrapper({ children }: { children: ReactNode }) {
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={client}>
+      <CreditPaywallProvider>{children}</CreditPaywallProvider>
+    </QueryClientProvider>
+  );
 }
 
 beforeEach(() => {
@@ -141,6 +156,53 @@ describe("useActiveRun — credits invalidation (§5.3, T8/T9)", () => {
       parts: [{ index: 0, type: "tool", toolInvocationId: "t1", name: "crop_image", status: "COMPLETED", creditUsed: 0.1 }],
     });
     expect(creditInvalidationCount(spy)).toBe(2);
+  });
+});
+
+describe("useActiveRun — mid-turn tool credit failure opens the paywall", () => {
+  it("opens the paywall once a FAILED tool part carries errorCode insufficient_credits", async () => {
+    const { result } = renderHook(() => useActiveRun("chat1", null), { wrapper });
+    act(() => result.current.start(makeRun(), makeRealtime()));
+
+    expect(screen.getByTestId("paywall-probe")).toHaveAttribute("data-open", "false");
+
+    setStream({
+      parts: [
+        {
+          index: 0,
+          type: "tool",
+          toolInvocationId: "t1",
+          name: "crop_image",
+          status: "FAILED",
+          errorMessage: "Not enough credits remain to run this tool.",
+          errorCode: "insufficient_credits",
+        },
+      ],
+    });
+
+    expect(screen.getByTestId("paywall-probe")).toHaveAttribute("data-open", "true");
+    expect(screen.getByTestId("paywall-probe")).toHaveAttribute("data-reason", "tool");
+  });
+
+  it("does not open the paywall for a non-credit tool failure", async () => {
+    const { result } = renderHook(() => useActiveRun("chat1", null), { wrapper });
+    act(() => result.current.start(makeRun(), makeRealtime()));
+
+    setStream({
+      parts: [
+        {
+          index: 0,
+          type: "tool",
+          toolInvocationId: "t1",
+          name: "crop_image",
+          status: "FAILED",
+          errorMessage: "The image could not be cropped. Please try again.",
+          errorCode: "crop_failed",
+        },
+      ],
+    });
+
+    expect(screen.getByTestId("paywall-probe")).toHaveAttribute("data-open", "false");
   });
 });
 

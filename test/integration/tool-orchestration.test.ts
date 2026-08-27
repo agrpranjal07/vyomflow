@@ -199,6 +199,13 @@ describe("executeAgentTurn — tool orchestration", () => {
     const toolResult = blocks.find((b) => b.type === "tool_result")!;
     expect(toolResult.status).toBe("FAILED");
     expect(toolResult.durationMs).toBeGreaterThanOrEqual(0);
+
+    // The tool stream part must carry errorCode, not just errorMessage, so
+    // the frontend paywall can distinguish a credit failure from any other
+    // tool failure without string-matching (see credit-paywall-dialog.tsx).
+    const toolPartWrites = streamWrite.mock.calls.map(([part]) => part).filter((p: { type: string }) => p.type === "tool");
+    const failedWrite = toolPartWrites.find((p: { status: string }) => p.status === "FAILED");
+    expect(failedWrite?.errorCode).toBe("insufficient_credits");
   });
 
   it("marks the ToolInvocation FAILED on an engine-reported failure and still finishes the turn", async () => {

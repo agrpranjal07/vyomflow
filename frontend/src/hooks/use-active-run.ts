@@ -9,6 +9,7 @@ import * as waitpointsService from "@/services/waitpoints";
 import { messageKeys } from "@/hooks/use-messages";
 import { chatKeys } from "@/hooks/use-chats";
 import { creditKeys } from "@/hooks/use-credits";
+import { useCreditPaywall } from "@/components/credits/paywall-provider";
 import type { AgentRunDTO, RealtimeAccess, TurnStreamPart } from "@/contracts/runs";
 import type { ToolInvocationDTO } from "@/contracts/tools";
 import type { RespondToWaitpointRequest, WaitpointDTO } from "@/contracts/waitpoints";
@@ -94,6 +95,7 @@ const STREAM_TIMEOUT_SECONDS = 300;
 export function useActiveRun(chatId: string, seedActiveRunId: string | null | undefined) {
   const fetcher = useApiClient();
   const queryClient = useQueryClient();
+  const { open: openPaywall } = useCreditPaywall();
 
   const [run, setRun] = useState<AgentRunDTO | null>(null);
   const [realtime, setRealtime] = useState<RealtimeAccess | null>(null);
@@ -596,9 +598,16 @@ export function useActiveRun(chatId: string, seedActiveRunId: string | null | un
       if (isTerminalToolStatus(tool.status) && !invalidatedCreditToolIds.current.has(tool.toolInvocationId)) {
         invalidatedCreditToolIds.current.add(tool.toolInvocationId);
         queryClient.invalidateQueries({ queryKey: creditKeys.all });
+        // A mid-turn reservation failure surfaces here, not as a thrown
+        // ApiError — the run itself keeps going (turn.ts:690-717). The tool
+        // card still renders its own FAILED/errorMessage state; this only
+        // adds the blocking paywall on top, deduped per run by the provider.
+        if (tool.status === "FAILED" && tool.errorCode === "insufficient_credits") {
+          openPaywall("tool");
+        }
       }
     }
-  }, [streamedTools, queryClient]);
+  }, [streamedTools, queryClient, openPaywall]);
 
   const cancel = useCallback(async () => {
     if (!run) return;

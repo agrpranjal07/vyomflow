@@ -3,6 +3,18 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { SidebarCreditBlock } from "@/components/chat/sidebar";
 import { useCredits } from "@/hooks/use-credits";
+import { CreditPaywallProvider } from "@/components/credits/paywall-provider";
+
+// @base-ui/react's Dialog isn't safely renderable in this workspace's RTL
+// environment — see mocks/ui-dialog.tsx's header comment. SidebarCreditBlock
+// now opens the shared CreditPaywallProvider's dialog on "Add Credits", so
+// every render here needs the provider (and the dialog's own useCredits
+// call needs the same mock as the block itself).
+vi.mock("@/components/ui/dialog", () => import("./mocks/ui-dialog"));
+
+function withPaywallProvider(ui: React.ReactElement) {
+  return <CreditPaywallProvider>{ui}</CreditPaywallProvider>;
+}
 
 // S7 audit 2026-08-21 — regression coverage for two bugs found comparing
 // the sidebar footer against the live reference (Claude-in-Chrome
@@ -49,7 +61,7 @@ function FooterHarness() {
 describe("Sidebar credit block — visibility gated on footer expand state", () => {
   it("is absent when the footer is collapsed (\"More\") — the reference shows no credit content here", () => {
     mockCredits("98.49");
-    render(<FooterHarness />);
+    render(withPaywallProvider(<FooterHarness />));
 
     expect(screen.getByText("More")).toBeInTheDocument();
     expect(screen.queryByText("Available Credits")).not.toBeInTheDocument();
@@ -57,7 +69,7 @@ describe("Sidebar credit block — visibility gated on footer expand state", () 
 
   it("renders the flat Available Credits row once the footer is expanded (\"Less\")", () => {
     mockCredits("98.49");
-    render(<FooterHarness />);
+    render(withPaywallProvider(<FooterHarness />));
 
     fireEvent.click(screen.getByText("More"));
 
@@ -69,7 +81,7 @@ describe("Sidebar credit block — visibility gated on footer expand state", () 
 
   it("collapses again on a second click, hiding the credit block", () => {
     mockCredits("98.49");
-    render(<FooterHarness />);
+    render(withPaywallProvider(<FooterHarness />));
 
     fireEvent.click(screen.getByText("More"));
     expect(screen.getByText("Available Credits")).toBeInTheDocument();
@@ -86,7 +98,7 @@ describe("SidebarCreditBlock — loading/error states, no fabricated balance", (
       isLoading: true,
       isError: false,
     } as unknown as ReturnType<typeof useCredits>);
-    render(<SidebarCreditBlock />);
+    render(withPaywallProvider(<SidebarCreditBlock />));
 
     expect(screen.getByText("Available Credits")).toBeInTheDocument();
     expect(screen.queryByText(/\d+(\.\d+)?M$/)).not.toBeInTheDocument();
@@ -98,20 +110,19 @@ describe("SidebarCreditBlock — loading/error states, no fabricated balance", (
       isLoading: false,
       isError: true,
     } as unknown as ReturnType<typeof useCredits>);
-    render(<SidebarCreditBlock />);
+    render(withPaywallProvider(<SidebarCreditBlock />));
 
     expect(screen.queryByText("0.00M")).not.toBeInTheDocument();
   });
 });
 
-describe("SidebarCreditBlock — Add Credits is honest, not a fake purchase flow", () => {
-  it("shows an inert 'not available' message on click, no fabricated success", async () => {
-    const { toast } = await import("sonner");
-    mockCredits("98.49");
-    render(<SidebarCreditBlock />);
+describe("SidebarCreditBlock — Add Credits opens the credit paywall", () => {
+  it("opens the paywall dialog on click, no fabricated purchase flow", () => {
+    mockCredits("0");
+    render(withPaywallProvider(<SidebarCreditBlock />));
 
     fireEvent.click(screen.getByRole("button", { name: /add credits/i }));
 
-    expect(toast.info).toHaveBeenCalledWith("Adding credits isn't available in this build.");
+    expect(screen.getByText("Out of credits")).toBeInTheDocument();
   });
 });
