@@ -4,6 +4,7 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useClerk, useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { CreateApiKeyDialog } from "@/components/settings/create-api-key-dialog";
+import { RevokeApiKeyDialog } from "@/components/settings/revoke-api-key-dialog";
 
 const apiKeysQueryKey = ["apiKeys"] as const;
 
@@ -48,10 +49,6 @@ export default function ApiKeysPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: apiKeysQueryKey }),
   });
 
-  function handleRevoke(apiKeyId: string) {
-    if (!confirm("Revoke this API key? This can't be undone.")) return;
-    revoke.mutate(apiKeyId);
-  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-6">
@@ -98,13 +95,14 @@ export default function ApiKeysPage() {
                         : "No expiration"}
                     </td>
                     <td className="p-3 text-right">
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => handleRevoke(apiKey.id)}
+                      <RevokeApiKeyDialog
+                        apiKeyName={apiKey.name}
+                        onConfirm={() => revoke.mutate(apiKey.id)}
                       >
-                        Revoke
-                      </Button>
+                        <Button variant="destructive" size="sm">
+                          Revoke
+                        </Button>
+                      </RevokeApiKeyDialog>
                     </td>
                   </tr>
                 ))}
