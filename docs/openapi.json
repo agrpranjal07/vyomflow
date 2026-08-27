@@ -287,6 +287,9 @@
                     },
                     "errorMessage": {
                       "type": "string"
+                    },
+                    "errorCode": {
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -633,6 +636,9 @@
                             }
                           },
                           "errorMessage": {
+                            "type": "string"
+                          },
+                          "errorCode": {
                             "type": "string"
                           }
                         },
@@ -994,6 +1000,9 @@
                           }
                         },
                         "errorMessage": {
+                          "type": "string"
+                        },
+                        "errorCode": {
                           "type": "string"
                         }
                       },
@@ -3056,6 +3065,9 @@
                         },
                         "errorMessage": {
                           "type": "string"
+                        },
+                        "errorCode": {
+                          "type": "string"
                         }
                       },
                       "required": [
@@ -4247,6 +4259,9 @@
                               }
                             },
                             "errorMessage": {
+                              "type": "string"
+                            },
+                            "errorCode": {
                               "type": "string"
                             }
                           },
@@ -5816,6 +5831,9 @@
                               }
                             },
                             "errorMessage": {
+                              "type": "string"
+                            },
+                            "errorCode": {
                               "type": "string"
                             }
                           },
