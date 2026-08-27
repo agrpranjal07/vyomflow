@@ -1,4 +1,4 @@
-// GENERATED — do not edit. Source: 0f5444fa8bbe10c41e18f0fbcc89a4c3d6dd047a:src/contracts/waitpoints.ts
+// GENERATED — do not edit. Source: 1173916808585c5b39a4dfd2d96256d6ec489be5:src/contracts/waitpoints.ts
 /**
  * S6 — Waitpoint contracts (.claude/specs/S6-reliability-implementation-plan.md
  * §6.2/§6.2a/§7.1). Pure Zod only, same rules as every other file under

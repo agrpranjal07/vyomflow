@@ -1,4 +1,4 @@
-// GENERATED — do not edit. Source: 0f5444fa8bbe10c41e18f0fbcc89a4c3d6dd047a:src/contracts/runs.ts
+// GENERATED — do not edit. Source: 1173916808585c5b39a4dfd2d96256d6ec489be5:src/contracts/runs.ts
 /**
  * S2 — durable streaming turn contracts. Pure Zod only, same rules as every
  * other file under src/contracts/** (00-master-spec.md §2): no Prisma
@@ -116,6 +116,11 @@ export const ToolStreamPartSchema = z.object({
   creditUsed: z.number().nonnegative().optional(),
   resultUrls: z.array(z.url()).optional(),
   errorMessage: z.string().optional(),
+  // Machine-readable failure reason (currently only "insufficient_credits",
+  // set by src/trigger/turn.ts's reserveAdditional failure path) so the
+  // client can distinguish a credit exhaustion from any other tool failure
+  // without string-matching errorMessage.
+  errorCode: z.string().optional(),
 });
 // S6 — realtime delivery of a waitpoint's creation/resolution without
 // waiting on a REST round-trip, mirroring the tool part's own

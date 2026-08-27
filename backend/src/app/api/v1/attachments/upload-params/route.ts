@@ -1,8 +1,9 @@
 import { authenticate } from "@/lib/auth";
-import { badRequest, handleOptions, json, notFound } from "@/lib/http";
+import { badRequest, handleOptions, insufficientCredits, json, notFound } from "@/lib/http";
 import { RequestUploadParamsBatchRequestSchema, RequestUploadParamsResponseSchema } from "@/contracts/attachments";
 import { getOwnedChat } from "@/services/chats";
 import { requestUploadParams, AttachmentLimitError } from "@/services/attachments";
+import { getCreditSummary } from "@/services/credits";
 
 export function OPTIONS() {
   return handleOptions();
@@ -28,6 +29,13 @@ export async function POST(req: Request) {
   // any chat exists (see RequestUploadParamsBatchRequestSchema's comment);
   // only verify ownership when a chatId was actually supplied.
   if (chatId && !(await getOwnedChat(auth.userId, chatId))) return notFound();
+
+  // Uploads exist only to feed paid tools — block them at zero balance so a
+  // spent-out user doesn't attach files they can never use.
+  const { available } = await getCreditSummary(auth.userId);
+  if (Number(available) <= 0) {
+    return insufficientCredits("Insufficient credits to upload attachments.");
+  }
 
   try {
     const uploads = await requestUploadParams({ chatId, ownerId: auth.userId, files });

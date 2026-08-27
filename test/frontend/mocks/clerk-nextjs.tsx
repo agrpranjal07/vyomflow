@@ -16,8 +16,14 @@ export function useAuth() {
   return { isSignedIn: true, getToken: async () => "test-token" };
 }
 
+// Stable module-level fns (not fresh vi.fn()s per render) so a test can
+// `import { clerkSignOut } from "@clerk/nextjs"` — same pattern as
+// mocks/sonner.tsx's `toast` — and assert on calls directly.
+export const clerkSignOut = vi.fn();
+const clerkOpenSignIn = vi.fn();
+
 export function useClerk() {
-  return { openSignIn: vi.fn(), signOut: vi.fn() };
+  return { openSignIn: clerkOpenSignIn, signOut: clerkSignOut };
 }
 
 export function UserButton() {

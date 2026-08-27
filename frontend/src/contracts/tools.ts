@@ -1,4 +1,4 @@
-// GENERATED — do not edit. Source: 0f5444fa8bbe10c41e18f0fbcc89a4c3d6dd047a:src/contracts/tools.ts
+// GENERATED — do not edit. Source: 1173916808585c5b39a4dfd2d96256d6ec489be5:src/contracts/tools.ts
 /**
  * S3 — Typed Tool Registry + 3 Real Media-Tool Adapters. Pure Zod only, same
  * rules as every other file under src/contracts/** (00-master-spec.md §2):

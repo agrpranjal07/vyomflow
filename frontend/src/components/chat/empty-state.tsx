@@ -13,6 +13,8 @@ import { useApiClient } from "@/hooks/use-api-client";
 import { useAttachments } from "@/hooks/use-attachments";
 import * as runsService from "@/services/runs";
 import { messageKeys } from "@/hooks/use-messages";
+import { isInsufficientCredits } from "@/lib/credit-errors";
+import { useCreditPaywall } from "@/components/credits/paywall-provider";
 
 // Matches the observed live-product empty state (recon-findings.md):
 // centered icon, "Your AI worker" headline, subheading, composer below.
@@ -23,6 +25,7 @@ export function EmptyState() {
   const queryClient = useQueryClient();
   const { isSignedIn } = useAuth();
   const { openSignIn } = useClerk();
+  const { open: openPaywall } = useCreditPaywall();
   // Chat-create and first-send are two independent backend calls; a retry
   // after a mid-sequence failure must resume against the chat already
   // created rather than creating another orphaned empty one (audit finding
@@ -61,7 +64,11 @@ export function EmptyState() {
       queryClient.invalidateQueries({ queryKey: chatKeys.all });
       router.push(`/c/${chatId}`);
     } catch (err) {
-      toast.error("Couldn't start a new chat — try again.");
+      if (isInsufficientCredits(err)) {
+        openPaywall("message");
+      } else {
+        toast.error("Couldn't start a new chat — try again.");
+      }
       throw err;
     }
   }

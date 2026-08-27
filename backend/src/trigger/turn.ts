@@ -710,7 +710,15 @@ function buildToolExecutor(ctx: BuildExecutorContext) {
           durationMs,
           errorMessage,
         });
-        write({ index: nextIndex(), type: "tool", toolInvocationId: invocation.id, name: tool.name, status: "FAILED", errorMessage });
+        write({
+          index: nextIndex(),
+          type: "tool",
+          toolInvocationId: invocation.id,
+          name: tool.name,
+          status: "FAILED",
+          errorMessage,
+          errorCode: "insufficient_credits",
+        });
         await persistOrStop();
         results[callIndex] = { id: call.id, output: { status: "failed", error: errorMessage }, isError: true };
         continue;
