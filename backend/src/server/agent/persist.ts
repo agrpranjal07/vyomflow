@@ -12,11 +12,31 @@
 import { prisma } from "@/lib/db";
 import { releaseHold as releaseHoldTx, recordUsage as recordUsageTx } from "@/services/credits";
 import { log } from "@/lib/logger";
+import { emitWebhookEvent } from "@/server/webhooks/emit";
+import { buildAgentStartedPayload, buildAgentCompletedPayload, buildAgentFailedPayload } from "@/server/webhooks/events";
 import type { ContentBlock } from "@/contracts/common";
 import type { Prisma } from "@/generated/prisma/client";
 
 function textContent(text: string): ContentBlock[] {
   return [{ type: "text", text }];
+}
+
+/**
+ * Resolves the webhook-emission identity (owning user + chat) for a run by
+ * its id alone — deliberately not threaded through every finalizer call
+ * site's params (several, e.g. src/trigger/sweep.ts's waitpoint-expiry path
+ * and src/services/runs.ts's reconciler, never had a userId in scope at
+ * all). One extra indexed-by-PK lookup on the (rare, best-effort) webhook
+ * path is cheap; requiring every existing call site to thread userId
+ * through was not worth the churn. Returns null only if the run itself has
+ * vanished (never expected on a row a finalizer just transitioned).
+ */
+async function ownerAndChatForRun(runId: string): Promise<{ userId: string; chatId: string } | null> {
+  const run = await prisma.agentRun.findUnique({
+    where: { id: runId },
+    select: { chatId: true, chat: { select: { ownerId: true } } },
+  });
+  return run ? { userId: run.chat.ownerId, chatId: run.chatId } : null;
 }
 
 /**
@@ -53,13 +73,29 @@ export async function createAssistantMessage(runId: string, chatId: string): Pro
   return message.id;
 }
 
-/** queued -> running (conditional). Returns false if another writer already claimed it (e.g. a cancel-while-queued). */
+/**
+ * queued -> running (conditional). Returns false if another writer already
+ * claimed it (e.g. a cancel-while-queued). Emits `agent.started` on a
+ * genuine transition only — `reclaimRunningForRetry` below is a crashed
+ * *retry* of the same run continuing, not a new start, and never emits.
+ */
 export async function markRunning(runId: string, triggerRunId: string): Promise<boolean> {
   const { count } = await prisma.agentRun.updateMany({
     where: { id: runId, status: "queued" },
     data: { status: "running", triggerRunId, startedAt: new Date() },
   });
-  return count > 0;
+  const started = count > 0;
+  if (started) {
+    const owner = await ownerAndChatForRun(runId);
+    if (owner) {
+      await emitWebhookEvent({
+        userId: owner.userId,
+        eventType: "agent.started",
+        payload: buildAgentStartedPayload({ runId, chatId: owner.chatId }),
+      });
+    }
+  }
+  return started;
 }
 
 /**
@@ -192,6 +228,16 @@ export async function finalizeCompleted(params: FinalizeCompletedParams): Promis
   // `applied: false` means another writer won the terminal transition
   // first — a race worth seeing in the log, not an error.
   log.info("run.finalized", { runId, chatId, messageId: assistantMessageId, traceId, status: "completed", applied });
+  if (applied) {
+    const owner = await ownerAndChatForRun(runId);
+    if (owner) {
+      await emitWebhookEvent({
+        userId: owner.userId,
+        eventType: "agent.completed",
+        payload: buildAgentCompletedPayload({ runId, chatId: owner.chatId }),
+      });
+    }
+  }
   return applied;
 }
 
@@ -234,6 +280,16 @@ export async function finalizeFailed(params: FinalizeFailedParams): Promise<bool
     fromStatus,
     applied,
   });
+  if (applied) {
+    const owner = await ownerAndChatForRun(runId);
+    if (owner) {
+      await emitWebhookEvent({
+        userId: owner.userId,
+        eventType: "agent.failed",
+        payload: buildAgentFailedPayload({ runId, chatId: owner.chatId, errorCode }),
+      });
+    }
+  }
   return applied;
 }
 

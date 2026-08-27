@@ -22,6 +22,24 @@
 export const CREDIT_STARTING_BALANCE = 100.0;
 
 /**
+ * Public-facing base URL of this API (`/api/public/v1/*`, `/api/mcp`,
+ * OpenAPI `servers`), env-driven so a Preview/Production move is a config
+ * change only. No hardcoded production default — see the fail-fast
+ * assertion below.
+ */
+export const PUBLIC_API_BASE_URL = (process.env.PUBLIC_API_BASE_URL ??
+  (process.env.NODE_ENV === "production" ? undefined : "http://localhost:3000")) as string;
+
+/**
+ * CLAIM_AUDIT flagged FRONTEND_ORIGIN silently defaulting to localhost in
+ * production (lib/http.ts / lib/auth.ts). Fail fast at module load rather
+ * than serving CORS/auth against the wrong origin indefinitely.
+ */
+if (process.env.NODE_ENV === "production" && (!process.env.FRONTEND_ORIGIN || !PUBLIC_API_BASE_URL)) {
+  throw new Error("FRONTEND_ORIGIN and PUBLIC_API_BASE_URL must be set in production.");
+}
+
+/**
  * Minimum refundable admission reserved on send for the LLM-only path (no
  * tools yet — S3 adds per-tool pre-dispatch estimates). Chosen against the
  * reference product's observed ~0.04M cost for one text turn
@@ -338,3 +356,13 @@ export const AGENT_TURN_QUEUE_CONCURRENCY = 5;
  * deliberately rather than discovered as a mystery stall.
  */
 export const MEDIA_TOOL_QUEUE_CONCURRENCY = AGENT_TURN_QUEUE_CONCURRENCY;
+
+/**
+ * S8 Phase 6 — signed outbound webhooks. Hard timeout on the single
+ * outbound HTTP call to a receiver (bounded, independent of the child
+ * task's own `maxDuration`/retry schedule — see server/webhooks/retry.ts
+ * for the retry backoff itself) and a small, best-effort-side-channel
+ * concurrency bound on the `webhook-delivery` queue.
+ */
+export const WEBHOOK_DELIVERY_REQUEST_TIMEOUT_MS = 10_000;
+export const WEBHOOK_DELIVERY_QUEUE_CONCURRENCY = 10;

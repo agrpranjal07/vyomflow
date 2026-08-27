@@ -42,12 +42,46 @@ function toMessageDTO(
   };
 }
 
+// Namespaces a caller-supplied `Idempotency-Key` header (S8 public API)
+// away from the internally-synthesized `send:${chatId}:${message.id}` key
+// below, and scopes it per chat — the same header value reused across two
+// different chats must not collide.
+function externalIdempotencyKey(chatId: string, key: string): string {
+  return `ext:${chatId}:${key}`;
+}
+
+/**
+ * Idempotent-replay lookup for the public send-message route: if a run
+ * already exists for this chat + caller-supplied Idempotency-Key, returns
+ * its persisted message/run so a retrying client is never double-charged
+ * or double-dispatched. Returns null on first sight of the key.
+ */
+export async function findTurnByIdempotencyKey(
+  chatId: string,
+  key: string,
+): Promise<{ message: MessageDTO; run: AgentRun } | null> {
+  const run = await prisma.agentRun.findUnique({ where: { idempotencyKey: externalIdempotencyKey(chatId, key) } });
+  if (!run) return null;
+
+  const message = await prisma.message.findUniqueOrThrow({ where: { id: run.userMessageId } });
+  const attachments = (
+    await prisma.attachment.findMany({ where: { messageId: message.id }, orderBy: { orderIndex: "asc" } })
+  ).map(toAttachmentDTO);
+  return { message: toMessageDTO(message, attachments), run };
+}
+
 export async function createTurn(params: {
   chatId: string;
   userId: string;
   content: ContentBlock[];
   attachmentIds: string[];
   requestedModel: string;
+  // S8 public API — caller-supplied `Idempotency-Key` header value, stored
+  // as this run's idempotencyKey instead of the internally-synthesized one
+  // so a later `findTurnByIdempotencyKey` call can find it. Optional and
+  // additive: existing internal callers (the `/api/v1` send route) don't
+  // pass it and keep the original synthesized-key behavior unchanged.
+  externalIdempotencyKey?: string;
 }): Promise<{ message: MessageDTO; run: AgentRun }> {
   const { chatId, userId, content, attachmentIds, requestedModel } = params;
 
@@ -87,7 +121,9 @@ export async function createTurn(params: {
       run = await tx.agentRun.create({
         data: {
           chatId,
-          idempotencyKey: `send:${chatId}:${message.id}`,
+          idempotencyKey: params.externalIdempotencyKey
+            ? externalIdempotencyKey(chatId, params.externalIdempotencyKey)
+            : `send:${chatId}:${message.id}`,
           userMessageId: message.id,
           requestedModel,
         },

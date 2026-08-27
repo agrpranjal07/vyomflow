@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "tsx scripts/openapi-check.ts",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -11,13 +12,15 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "contracts:sync": "tsx scripts/contracts-sync.ts",
-    "docs:openapi": "tsx scripts/generate-openapi.ts"
+    "docs:openapi": "tsx scripts/generate-openapi.ts",
+    "openapi:check": "tsx scripts/openapi-check.ts"
   },
   "dependencies": {
     "@clerk/backend": "^3.16.8",
+    "@modelcontextprotocol/server": "2.0.0",
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
-    "@trigger.dev/sdk": "^4.5.11",
+    "@trigger.dev/sdk": "4.5.12",
     "gray-matter": "^4.0.3",
     "next": "16.3.1",
     "pg": "^8.23.0",
@@ -28,8 +31,8 @@
   },
   "devDependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
-    "@trigger.dev/build": "^4.5.11",
-    "@trigger.dev/core": "4.5.11",
+    "@trigger.dev/build": "4.5.12",
+    "@trigger.dev/core": "4.5.12",
     "@types/node": "^20",
     "@types/pg": "^8.23.1",
     "@types/react": "^19",

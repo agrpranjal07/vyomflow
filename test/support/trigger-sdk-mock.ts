@@ -41,11 +41,61 @@ export function __resetTriggerSdkMock() {
     throw new Error("trigger-sdk-mock: retrieve called without a test-configured __setRetrieveResult");
   };
   waitpointTokens = new Map();
+  streamParts = [];
+  scopedStreamParts.clear();
+  scopedRunShapes.clear();
+}
+
+// S8 Phase 4 (public stream route) — a plain async-iterable-over-an-array
+// stand-in for the real SDK's AsyncIterableStream/RunSubscription. Finite
+// and pre-populated per test scenario (no live cross-call push queue is
+// needed: src/app/api/public/v1/runs/[runId]/stream/route.ts calls
+// `streams.read`/`runs.subscribeToRun` fresh on every request, so each
+// simulated connection just gets its own already-known backlog). Honors
+// `signal` so the route's `cancel()`/cleanup abort path unblocks a reader
+// that's still mid-iteration, same as the real SDK.
+function makeAsyncIterableFromArray<T>(items: readonly T[], signal?: AbortSignal) {
+  let cursor = 0;
+  async function next(): Promise<IteratorResult<T>> {
+    if (signal?.aborted || cursor >= items.length) {
+      return { value: undefined as unknown as T, done: true };
+    }
+    return { value: items[cursor++], done: false };
+  }
+  return {
+    getReader() {
+      return { read: next, releaseLock() {}, cancel: async () => undefined };
+    },
+    [Symbol.asyncIterator]() {
+      return { next };
+    },
+  };
+}
+
+type ScopedStreamPart = { index?: number; [key: string]: unknown };
+// Keyed by `${triggerRunId}::${key}` — distinct from the flat `streamParts`
+// list below (MCP's simpler no-arg `streams.read()` call shape), since the
+// public stream route always passes an explicit (runId, key, options).
+const scopedStreamParts = new Map<string, ScopedStreamPart[]>();
+export function __setScopedStreamParts(triggerRunId: string, key: string, parts: ScopedStreamPart[]) {
+  scopedStreamParts.set(`${triggerRunId}::${key}`, parts);
+}
+
+type MockRunShape = { isCompleted?: boolean; isFailed?: boolean; isCancelled?: boolean; [key: string]: unknown };
+const scopedRunShapes = new Map<string, MockRunShape[]>();
+export function __setRunShapes(triggerRunId: string, shapes: MockRunShape[]) {
+  scopedRunShapes.set(triggerRunId, shapes);
 }
 
 export const runs = {
   retrieve: vi.fn((triggerRunId: string) => retrieveImpl(triggerRunId)),
   cancel: vi.fn(async () => undefined),
+  // Public stream route's run-terminal detection (Promise.all'd alongside
+  // the parts pump — see that route's comment on why not Promise.race).
+  subscribeToRun: vi.fn((triggerRunId: string, options?: { signal?: AbortSignal }) => {
+    const shapes = scopedRunShapes.get(triggerRunId) ?? [];
+    return makeAsyncIterableFromArray(shapes, options?.signal);
+  }),
 };
 
 // Unused by reconcileIfStale but imported elsewhere in backend/src (dispatch.ts,
@@ -64,7 +114,40 @@ export const task = vi.fn((opts: unknown) => opts);
 // additionally exports its run body as a standalone function; sweep.ts does
 // not, so tests call `.run()` on the pass-through object itself).
 export const schedules = { task: vi.fn((opts: unknown) => opts) };
-export const streams = { define: vi.fn((key: string) => key) };
+// S8 Phase 5 (MCP) — src/mcp/wait.ts's bounded long-poll reads
+// `streams.read<TurnStreamPart>(triggerRunId, key, options)` directly
+// against the raw SDK. Configurable via `__setStreamParts` so MCP tests can
+// simulate a run's realtime stream without a real Trigger.dev connection.
+let streamParts: unknown[] = [];
+export function __setStreamParts(parts: unknown[]) {
+  streamParts = parts;
+}
+export const streams = {
+  define: vi.fn((key: string) => key),
+  // Two real overloads share this one mock, distinguished by arg shape:
+  // MCP's `read()` (no args — flat `streamParts`/`__setStreamParts`) vs the
+  // public stream route's `read(triggerRunId, key, { startIndex, signal })`
+  // (per-run backlog via `__setScopedStreamParts`, with `startIndex`
+  // filtering and `signal` abort — both needed for that route's
+  // resume/duration-limit/disconnect behavior to be testable at all).
+  read: vi.fn(async function read(...args: unknown[]) {
+    if (args.length >= 2 && typeof args[0] === "string" && typeof args[1] === "string") {
+      const [triggerRunId, key, options] = args as [
+        string,
+        string,
+        ({ startIndex?: number; signal?: AbortSignal } | undefined)?,
+      ];
+      const all = scopedStreamParts.get(`${triggerRunId}::${key}`) ?? [];
+      const startIndex = options?.startIndex ?? 0;
+      const filtered = all.filter((p) => typeof p.index !== "number" || p.index >= startIndex);
+      return makeAsyncIterableFromArray(filtered, options?.signal);
+    }
+    const parts = streamParts;
+    return (async function* () {
+      for (const part of parts) yield part;
+    })();
+  }),
+};
 
 // S6 — src/trigger/turn.ts's waitpoint gates (`wait.createToken`/
 // `wait.forToken`) and src/services/waitpoints.ts's resume

@@ -50,6 +50,13 @@ See `.env.example` for the full list with inline notes. In short:
 | `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` | Image generation via Cloudflare Workers AI (token needs `Workers AI: Edit` scope) |
 | `TRIGGER_SECRET_KEY` / `TRIGGER_PROJECT_REF` | Durable task execution and realtime streaming |
 | `TRANSLOADIT_AUTH_KEY` / `TRANSLOADIT_AUTH_SECRET` | Signed upload assemblies, generated server-side only |
+| `PUBLIC_API_BASE_URL` | This API's own public base URL — OpenAPI `servers`, public-surface links. Required in production (module load throws if unset) |
+
+Values differ by environment (local / Vercel Preview / Vercel Production) — see the inline
+comments in `.env.example` for the expected value in each. Never put a real secret in
+`.env.example`; only names, purpose, and non-secret examples belong there. Webhook delivery has
+no environment variable of its own — signing secrets are generated per-endpoint server-side and
+returned once when a user registers or rotates their endpoint.
 
 ## Scripts
 
@@ -136,9 +143,31 @@ threshold. Structured logs on every code path in the turn lifecycle carry `chatI
   (429, empty stream, malformed tool calls) against deterministic fixtures, and real calls are
   reserved for the primary success-path acceptance runs and the demo.
 
+## Surfaces
+
+- **`https://www.vyomflow.co.in`** — first-party browser app (frontend), Clerk session-cookie auth.
+- **`https://api.vyomflow.co.in`** — this app. The internal API (`/api/v1/*`, session-token only,
+  used by the frontend), a public REST API (`/api/public/v1/*`, bearer API-key only), and an MCP
+  server (`/api/mcp`, bearer API-key only, streamable-HTTP).
+- **`https://docs.vyomflow.co.in`** — published API reference and quickstart (Mintlify), including
+  an in-browser playground that calls `/api/public/v1/*` with a pasted API key.
+
+The apex domain `https://vyomflow.co.in` redirects (308) to `https://www.vyomflow.co.in`.
+
+## Authentication
+
+Two independent token types are accepted, verified independently of each other:
+
+- **Session token** — first-party web app only. Clerk-issued, cookie/session-based, restricted to
+  the frontend origin (`FRONTEND_ORIGIN`). Used by `/api/v1/*`.
+- **API key** — for programmatic/agent access: the public REST API and MCP. Clerk-native
+  (`clerkClient.apiKeys.create()`), scoped, expirable, and revocable. A signed-in user mints one at
+  `https://www.vyomflow.co.in/settings/api-keys`. Keys are scoped to the Clerk instance that issued
+  them and stop working if the app switches instances. Sent as `Authorization: Bearer <key>` —
+  never as a query parameter.
+
 ## API documentation
 
-Generated OpenAPI reference (from the internal request/response contracts in `src/contracts/**`,
-via `pnpm docs:openapi`), published on Mintlify: **https://vyom-flow.mintlify.site/**. This
-documents the endpoints that exist internally as of the current build, not a separate public-only
-API surface.
+Generated OpenAPI reference (from the request/response contracts in `src/contracts/**`, via
+`pnpm docs:openapi`), published on Mintlify at **https://docs.vyomflow.co.in**, covering the public
+REST API, MCP tools, and streaming/event semantics, with a live playground for the public surface.

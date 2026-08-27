@@ -11,16 +11,14 @@
 // (e.g. a settings route) should be added to the protected default by
 // simply NOT listing it here.
 //
-// Do NOT enable `frontendApiProxy` here: Clerk's Frontend API proxy/custom-
-// domain feature is Production-instance only (confirmed in Clerk Dashboard
-// > Domains — no proxy configuration option exists for a Development
-// instance, only "You'll need to configure a custom domain in production").
-// This app runs on Development instance keys in production per the
-// project's own architecture decision, so enabling it makes every
-// `/__clerk/*` handshake fail with `proxy_request_invalid_secret_key`,
-// regardless of whether the secret key is correct. Clerk JS loads directly
-// from the instance's own Frontend API domain (`*.clerk.accounts.dev`)
-// instead, which is the supported path for Development keys.
+// `frontendApiProxy` is left disabled/unchanged here. This app now runs a
+// genuine Clerk Production instance on custom domains
+// (https://www.vyomflow.co.in etc.), so the earlier rationale for not
+// enabling it — Development-instance keys lacking proxy support — no
+// longer applies. Whether to turn `frontendApiProxy` on is a functional
+// decision, not a documentation fix, and hasn't been made; do not enable
+// it without deliberately verifying the proxy path against the production
+// instance first.
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
 const isPublicRoute = createRouteMatcher([

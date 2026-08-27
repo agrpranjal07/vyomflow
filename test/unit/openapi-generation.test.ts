@@ -48,10 +48,17 @@ describe("S8 OpenAPI generation", () => {
     expect(Object.keys(doc.paths ?? {}).length).toBeGreaterThan(0);
   });
 
-  it("documents exactly the routes that exist in the internal route tree — no invented paths, none missing", () => {
+  it("documents exactly the routes that exist in the route tree — no invented paths, none missing", () => {
+    // `/api/mcp` is a streamable-HTTP JSON-RPC transport (initialize/tools-call
+    // over POST, not a REST resource), not expressible as an OpenAPI path — it
+    // is documented by hand in docs/mcp.mdx instead. Every other route.ts,
+    // including the public `/api/public/v1/*` and internal `/api/v1/*` trees,
+    // must have exact parity with the generated document.
+    const MCP_EXCLUDED_PATHS = new Set(["/api/mcp"]);
+
     const doc = generateDocument();
     const documented = new Set(Object.keys(doc.paths ?? {}));
-    const actual = listActualRoutePaths();
+    const actual = new Set([...listActualRoutePaths()].filter((p) => !MCP_EXCLUDED_PATHS.has(p)));
 
     for (const path of documented) {
       expect(actual.has(path), `documented path ${path} has no matching route.ts`).toBe(true);
