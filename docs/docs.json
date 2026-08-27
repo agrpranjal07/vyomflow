@@ -72,5 +72,8 @@
         "href": "https://github.com/agrpranjal07/vyomflow-backend"
       }
     ]
+  },
+  "markdown": {
+    "schema": true
   }
 }
