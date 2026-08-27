@@ -1,8 +1,11 @@
 "use client";
 
-import { useAPIKeys, useClerk } from "@clerk/nextjs";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { useClerk, useUser } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { CreateApiKeyDialog } from "@/components/settings/create-api-key-dialog";
+
+const apiKeysQueryKey = ["apiKeys"] as const;
 
 /**
  * Standalone /settings/api-keys page — lets a signed-in user mint/manage
@@ -13,23 +16,41 @@ import { CreateApiKeyDialog } from "@/components/settings/create-api-key-dialog"
  * /api/v1/api-keys), never Clerk's `<APIKeys/>` widget / Frontend API:
  * confirmed live that Frontend-API-minted keys carry zero scopes and 403
  * on every public route, since scopes can only be set via the Backend API
- * (Context7 `/clerk/clerk-docs`). Listing and revocation stay on Clerk's
- * own `useAPIKeys()`/`clerk.apiKeys.revoke` — those operations are
- * scope-agnostic and a Backend-API-created key is still a normal
- * `api_keys` resource under the same user, so it appears here like any
- * other key.
+ * (Context7 `/clerk/clerk-docs`).
+ *
+ * Listing goes through TanStack Query (this app's existing server-state
+ * convention, see hooks/use-chats.ts) calling `clerk.apiKeys.getAll()`
+ * directly, rather than Clerk's own `useAPIKeys()` hook: verified live
+ * that the hook never fires its underlying fetch at all on this page
+ * (zero network request, `isLoading` settles to `false` with empty
+ * `data`) — its internal `isSignedIn` gate reads `clerk.user` once from
+ * the non-reactive Clerk client instance, which can still be `null` at
+ * that render. Gating the query on `useUser()`'s reactive `isLoaded`
+ * avoids the same race. Revocation stays on Clerk's own
+ * `clerk.apiKeys.revoke` — scope-agnostic, and a Backend-API-created key
+ * is still a normal `api_keys` resource under the same user, so it
+ * appears here like any other key.
  */
 export default function ApiKeysPage() {
-  const { data: apiKeys, isLoading, revalidate } = useAPIKeys();
   const clerk = useClerk();
+  const { isLoaded: userLoaded } = useUser();
+  const queryClient = useQueryClient();
 
-  async function handleRevoke(apiKeyId: string) {
+  const { data: apiKeys, isLoading } = useQuery({
+    queryKey: apiKeysQueryKey,
+    queryFn: async () => (await clerk.apiKeys.getAll()).data,
+    enabled: userLoaded,
+  });
+
+  const revoke = useMutation({
+    mutationFn: (apiKeyId: string) =>
+      clerk.apiKeys.revoke({ apiKeyID: apiKeyId, revocationReason: "Revoked by user" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: apiKeysQueryKey }),
+  });
+
+  function handleRevoke(apiKeyId: string) {
     if (!confirm("Revoke this API key? This can't be undone.")) return;
-    await clerk.apiKeys.revoke({
-      apiKeyID: apiKeyId,
-      revocationReason: "Revoked by user",
-    });
-    revalidate();
+    revoke.mutate(apiKeyId);
   }
 
   return (
@@ -45,7 +66,9 @@ export default function ApiKeysPage() {
               server
             </p>
           </div>
-          <CreateApiKeyDialog onCreated={revalidate} />
+          <CreateApiKeyDialog
+            onCreated={() => queryClient.invalidateQueries({ queryKey: apiKeysQueryKey })}
+          />
         </div>
 
         <div className="mt-6 overflow-hidden rounded-[var(--radius-lg)] border border-border-hairline">
