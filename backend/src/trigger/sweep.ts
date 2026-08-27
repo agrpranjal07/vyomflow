@@ -16,6 +16,12 @@
  *   4. CreditHold rows OPEN whose AgentRun already reached a terminal
  *      status -> releaseHoldStandalone (a hold that should have been
  *      released by whatever finalized the run, but wasn't, for any reason).
+ *   5. Chat rows with zero messages older than EMPTY_CHAT_ORPHAN_TIMEOUT_MS
+ *      -> hard-deleted. A chat can be created (UI send race, public API
+ *      "create chat" call, MCP vyomflow_create_chat) without a message ever
+ *      following it; listChats already hides these from every surface
+ *      (messages: { some: {} }), so this only prunes rows nothing shows —
+ *      never a chat a user can currently see.
  */
 import { schedules } from "@trigger.dev/sdk";
 import { prisma } from "@/lib/db";
@@ -24,7 +30,13 @@ import { markToolFailed } from "@/services/tool-invocations";
 import { expireWaitpoint } from "@/services/waitpoints";
 import { releaseHoldStandalone } from "@/services/credits";
 import { finalizeFailed } from "@/server/agent/persist";
-import { TOOL_ORPHAN_TIMEOUT_MS, RUN_STALE_AFTER_MS, CANCEL_GRACE_MS, SWEEP_BATCH_SIZE } from "@/lib/config";
+import {
+  TOOL_ORPHAN_TIMEOUT_MS,
+  RUN_STALE_AFTER_MS,
+  CANCEL_GRACE_MS,
+  SWEEP_BATCH_SIZE,
+  EMPTY_CHAT_ORPHAN_TIMEOUT_MS,
+} from "@/lib/config";
 
 const WAITPOINT_EXPIRY_MESSAGES: Record<"CREDIT_APPROVAL" | "CLARIFICATION", string> = {
   CREDIT_APPROVAL: "Approval expired — you can continue later",
@@ -119,6 +131,27 @@ async function sweepOrphanedHolds(): Promise<void> {
   }
 }
 
+/**
+ * Hard delete, not soft delete — an empty chat has nothing a user could
+ * have referenced (no messages, no run, no share link), so there's no
+ * "undo" scenario to preserve the row for. Cascades to any Attachment rows
+ * left bound to it (schema: Attachment.chat onDelete: Cascade) — an upload
+ * attached but never sent within the grace period is exactly the same kind
+ * of abandoned-draft orphan.
+ */
+async function sweepEmptyChats(): Promise<void> {
+  const cutoff = new Date(Date.now() - EMPTY_CHAT_ORPHAN_TIMEOUT_MS);
+  // findMany + deleteMany(id in [...]), not one unbounded deleteMany --
+  // keeps this pass bounded by SWEEP_BATCH_SIZE like every other sweep here.
+  const orphaned = await prisma.chat.findMany({
+    where: { createdAt: { lt: cutoff }, messages: { none: {} } },
+    select: { id: true },
+    take: SWEEP_BATCH_SIZE,
+  });
+  if (orphaned.length === 0) return;
+  await prisma.chat.deleteMany({ where: { id: { in: orphaned.map((c) => c.id) } } });
+}
+
 export const reliabilitySweep = schedules.task({
   id: "reliability-sweep",
   // Every minute — matches SWEEP_INTERVAL_MS's intent (a plain millisecond
@@ -130,5 +163,6 @@ export const reliabilitySweep = schedules.task({
     await sweepOrphanedToolInvocations();
     await sweepExpiredWaitpoints();
     await sweepOrphanedHolds();
+    await sweepEmptyChats();
   },
 });

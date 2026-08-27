@@ -277,6 +277,18 @@ export const SWEEP_BATCH_SIZE = 500;
 export const CANCEL_GRACE_MS = 15_000;
 
 /**
+ * Grace period before an empty (message-less) chat is hard-deleted by the
+ * sweep. A chat row can legitimately exist for a short window with no
+ * messages yet — the public-API/MCP "create chat" call is a separate step
+ * from sending into it, and a UI double-submit race can momentarily create
+ * a second one (see empty-state.tsx's pendingChatIdRef) — but one that
+ * never receives a first message is an orphan, never a draft worth keeping
+ * indefinitely. An hour is generous enough that no genuine create-then-send
+ * caller trips it, short enough that orphans don't accumulate.
+ */
+export const EMPTY_CHAT_ORPHAN_TIMEOUT_MS = 60 * 60_000;
+
+/**
  * The agentTurn Trigger.dev task's own maxDuration, named explicitly so
  * trigger.config.ts's global default and turn.ts's task-level override can
  * both reference the same source of truth instead of two independently
