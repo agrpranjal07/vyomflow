@@ -65,6 +65,7 @@ import {
 } from "@/contracts/credits";
 import { SetWebhookEndpointRequestSchema, WebhookEndpointDTOSchema } from "@/contracts/webhooks";
 import { PublicSendTurnResponseSchema } from "@/public-api/mappers";
+import { CreateApiKeyRequestSchema } from "@/services/api-keys";
 
 export function buildRegistry(): OpenAPIRegistry {
   const registry = new OpenAPIRegistry();
@@ -577,6 +578,45 @@ export function buildRegistry(): OpenAPIRegistry {
       200: {
         description: "The endpoint's current state, including the secret(s) if just (re)generated.",
         content: { "application/json": { schema: WebhookEndpointDTO } },
+      },
+      400: errorResponse("Malformed request body."),
+      401: errorResponse("Missing or invalid credentials."),
+    },
+  });
+
+  // ---- API keys (self-serve minting, S8 Phase 3 follow-up) --------------
+  // Session-token auth on the internal `/api/v1` surface — same rationale as
+  // `/api/v1/webhooks` above. Mints a key via Clerk's Backend API, scoped to
+  // `PUBLIC_API_DEFAULT_SCOPES` (Clerk's own Frontend-API `<APIKeys/>` widget
+  // can never attach scopes — see src/services/api-keys.ts).
+  const ApiKeyResponseSchema = registry.register(
+    "ApiKeyResponse",
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      secret: z.string().describe("The raw key value. Shown exactly once, on creation."),
+      scopes: z.array(z.string()),
+      expiresAt: z.string().nullable(),
+    }),
+  );
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/api-keys",
+    tags: ["API Keys"],
+    summary: "Mint a self-serve public-API key",
+    description:
+      "Creates a new API key for the caller, scoped to the fixed default set of public-API " +
+      "scopes. The `secret` is returned in plaintext only on this response and cannot be " +
+      "retrieved again afterward.",
+    security,
+    request: {
+      body: { content: { "application/json": { schema: CreateApiKeyRequestSchema } } },
+    },
+    responses: {
+      201: {
+        description: "The newly created key, including its plaintext secret.",
+        content: { "application/json": { schema: ApiKeyResponseSchema } },
       },
       400: errorResponse("Malformed request body."),
       401: errorResponse("Missing or invalid credentials."),
