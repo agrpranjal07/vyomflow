@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+      # postinstall runs `prisma generate`; prisma.config.ts reads DATABASE_URL
+      # via raw process.env and never throws when it's unset, so no DB is needed here.
+      - run: pnpm install --frozen-lockfile
+        working-directory: backend
+      - run: pnpm exec tsc --noEmit
+        working-directory: backend
+      - run: pnpm lint
+        working-directory: backend
+      # Same check Vercel runs as `prebuild`; reads repo-root docs/openapi.json,
+      # which is why this job checks out the full repo, not just backend/.
+      - run: pnpm openapi:check
+        working-directory: backend
+
+  frontend-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - run: pnpm exec tsc --noEmit
+        working-directory: frontend
+      - run: pnpm lint
+        working-directory: frontend
+      # Verifies contracts.lock.json hashes and cross-checks drift against
+      # ../backend/src/contracts — needs the full checkout, not just frontend/.
+      - run: pnpm contracts:check
+        working-directory: frontend
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: |
+            backend/pnpm-lock.yaml
+            frontend/pnpm-lock.yaml
+            test/pnpm-lock.yaml
+      # All three installs are required: the vitest configs alias `zod`/`sharp`
+      # into backend/node_modules and app code into frontend/node_modules.
+      - run: pnpm install --frozen-lockfile
+        working-directory: backend
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - run: pnpm install --frozen-lockfile
+        working-directory: test
+      - run: pnpm test:unit
+        working-directory: test
+      - run: pnpm test:frontend
+        working-directory: test
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: vyomflow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NODE_ENV: test
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/vyomflow_test
+      # DATABASE_URL is deliberately left unset: migrate-test-db.ts throws if
+      # TEST_DATABASE_URL === DATABASE_URL, and unset satisfies that guard.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: |
+            backend/pnpm-lock.yaml
+            test/pnpm-lock.yaml
+      # migrate-test-db.ts shells out to backend/node_modules/.bin/prisma and
+      # throws if that binary is missing, so backend must be installed first.
+      - run: pnpm install --frozen-lockfile
+        working-directory: backend
+      - run: pnpm install --frozen-lockfile
+        working-directory: test
+      - run: pnpm exec tsx scripts/migrate-test-db.ts
+        working-directory: test
+      # Bypasses `pnpm test:integration`, whose `dotenv -e .env.local --`
+      # wrapper hard-fails in CI where .env.local does not exist.
+      - run: pnpm exec vitest run --config vitest.integration.config.mts
+        working-directory: test

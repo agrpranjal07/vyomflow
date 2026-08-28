@@ -1,0 +1,166 @@
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Single serialized queue for all production deploys. cancel-in-progress is
+# deliberately false: killing a run mid-`prisma migrate deploy` can leave a
+# migration row marked failed, requiring manual `prisma migrate resolve`.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      migrations: ${{ steps.filter.outputs.migrations }}
+      trigger: ${{ steps.filter.outputs.trigger }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - 'docs/openapi.json'
+              - '.github/workflows/deploy.yml'
+            migrations:
+              - 'backend/prisma/migrations/**'
+              - 'backend/prisma/schema.prisma'
+            trigger:
+              - 'backend/src/**'
+              - 'backend/agent-skills/**'
+              - 'backend/trigger.config.ts'
+              - 'backend/package.json'
+              - 'backend/prisma/schema.prisma'
+            frontend:
+              - 'frontend/**'
+              # contracts-check cross-checks drift against backend contracts,
+              # so a backend contract change must redeploy the frontend too.
+              - 'backend/src/contracts/**'
+              - '.github/workflows/deploy.yml'
+
+  migrate:
+    needs: changes
+    if: needs.changes.outputs.migrations == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: backend
+      # Must run from backend/ so Prisma 7 picks up prisma.config.ts, which
+      # supplies the datasource url from process.env.DATABASE_URL. Its own
+      # dotenv.config({path:".env.local"}) is a no-op here; real env wins.
+      # DATABASE_URL_DIRECT must be a non-pooled connection — see README/plan.
+      - run: pnpm exec prisma migrate deploy
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_DIRECT }}
+
+  deploy-trigger:
+    needs: [changes, migrate]
+    # always() so this still runs when `migrate` was skipped (no schema
+    # change), but never when it failed or was cancelled.
+    if: >-
+      always() &&
+      needs.migrate.result != 'failure' && needs.migrate.result != 'cancelled' &&
+      needs.changes.outputs.trigger == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          # Matches trigger.config.ts `runtime: "node-22"`.
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+      # Required before deploy: the build extensions (tsconfigPathsExtension,
+      # prismaExtension, ffmpeg, additionalFiles) resolve from node_modules.
+      - run: pnpm install --frozen-lockfile
+        working-directory: backend
+      # CLI pinned to the installed @trigger.dev/sdk version, not @latest —
+      # a CLI/SDK major skew can silently change build-extension behaviour.
+      # TRIGGER_PROJECT_REF is required because trigger.config.ts reads it.
+      - run: npx --yes trigger.dev@4.5.12 deploy
+        working-directory: backend
+        env:
+          TRIGGER_ACCESS_TOKEN: ${{ secrets.TRIGGER_ACCESS_TOKEN }}
+          TRIGGER_PROJECT_REF: ${{ vars.TRIGGER_PROJECT_REF }}
+
+  deploy-backend:
+    needs: [changes, migrate, deploy-trigger]
+    if: >-
+      always() &&
+      needs.migrate.result != 'failure' && needs.migrate.result != 'cancelled' &&
+      needs.deploy-trigger.result != 'failure' && needs.deploy-trigger.result != 'cancelled' &&
+      needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID_BACKEND }}
+    steps:
+      # Full checkout from repo root: `prebuild` (openapi-check.ts) reads
+      # ../docs/openapi.json, above the backend Root Directory.
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm install --global vercel@latest
+      # Writes .vercel/project.json (incl. rootDirectory: backend) and
+      # .vercel/.env.production.local, so no app env vars are duplicated here.
+      - run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+      # Run from repo ROOT, not backend/ — the CLI applies the pulled
+      # rootDirectory itself, which is what makes the ../docs path resolve.
+      - run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+      - run: vercel deploy --prebuilt --prod --archive=tgz --token=${{ secrets.VERCEL_TOKEN }}
+
+  deploy-frontend:
+    needs: [changes, deploy-backend]
+    # Frontend last: it ships the client that calls the new backend API.
+    if: >-
+      always() &&
+      needs.deploy-backend.result != 'failure' && needs.deploy-backend.result != 'cancelled' &&
+      needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID_FRONTEND }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm install --global vercel@latest
+      - run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+      # contracts-check's drift check needs ../backend/src/contracts present;
+      # the full checkout provides it, so it will not hit the "skip" warning.
+      - run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+      - run: vercel deploy --prebuilt --prod --archive=tgz --token=${{ secrets.VERCEL_TOKEN }}
