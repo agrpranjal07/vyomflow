@@ -13,6 +13,14 @@
  * in the same transaction (S3 plan §5.3) so settlement and persistence
  * cannot partially apply.
  *
+ * 2026-08-29 correction: credit approval is now a single round-level
+ * waitpoint gating only the calls not already decided this run (see
+ * `buildToolExecutor`'s doc comment below) and dispatch fans out via
+ * `mediaTool.batchTriggerAndWait`, not per-call `triggerAndWait` awaited
+ * with `Promise.allSettled` (the latter is an unsupported pattern per
+ * Trigger.dev's own docs, and the former defeated batching entirely — see
+ * `.claude/specs/S7-agent-runtime.md` §A.10 for the full incident writeup).
+ *
  * Stream index space: one counter (`streamIndex`), owned entirely by this
  * file, assigns every `write()` call's `index` — text delta or tool status
  * transition alike (D1: "one stream, one index space" — a client verifies
@@ -65,12 +73,14 @@ import {
   AGENT_TURN_QUEUE_CONCURRENCY,
   APPROVAL_CREDIT_THRESHOLD,
   WAITPOINT_TIMEOUT_MS,
+  MAX_PARALLEL_TOOL_DISPATCH,
 } from "@/lib/config";
 import { getToolDefinition, listToolSpecs } from "@/server/tools/registry";
 import { mediaTool, type MediaToolTaskResult } from "@/trigger/tool";
 import { reserveAdditional, captureForTool, InsufficientCreditsError } from "@/services/credits";
 import { markToolFailed } from "@/services/tool-invocations";
 import { createWaitpoint, toWaitpointDTO } from "@/services/waitpoints";
+import type { CreditApprovalCall } from "@/contracts/waitpoints";
 import { ASK_USER_TOOL_NAME, type AskUserInput } from "@/contracts/tools";
 import type { ContentBlock } from "@/contracts/common";
 import type { TurnStreamPart } from "@/contracts/runs";
@@ -210,9 +220,9 @@ export function extractCandidateUrls(input: Record<string, unknown>): string[] {
  * Builds the loop's `onToolCalls` executor (assignment's "Core Concepts":
  * tools are isolated — orchestration owns side effects and persistence).
  *
- * Independent tool dispatches now run in parallel (assignment §7:
- * "Independent tool calls may run in parallel, but results, charges, and
- * message ordering stay deterministic"), while everything ordering- and
+ * Independent tool dispatches run in parallel (assignment §7: "Independent
+ * tool calls may run in parallel, but results, charges, and message
+ * ordering stay deterministic"), while everything ordering- and
  * admission-sensitive stays strictly sequential, in model-emitted order:
  *
  *   - Validation, the URL allowlist check, ToolInvocation row creation, the
@@ -223,30 +233,54 @@ export function extractCandidateUrls(input: Record<string, unknown>): string[] {
  *     get admitted when headroom runs out depends only on model-emitted
  *     order, never on which tool's network round trip happens to finish
  *     first.
- *   - Only the slow part — `mediaTool.triggerAndWait` (the actual media-tool
- *     execution) and its resulting `captureForTool` — is deferred
- *     into a batch and awaited concurrently via `Promise.allSettled` once a
- *     call's reservation has already succeeded. `reserveAdditional`/
- *     `captureForTool` are each their own atomic, row-locked (`FOR UPDATE`)
- *     transaction (src/services/credits.ts) — safe to issue concurrently
- *     against the same CreditHold row with no read-then-write race, since
- *     admission for the parallelized calls was already decided serially
- *     above.
- *   - `Promise.allSettled` (not `Promise.all`) — one tool's dispatch
- *     throwing can never cancel or orphan sibling dispatches already
- *     in-flight; each batched dispatch also has its own internal try/catch
- *     so a thrown error still resolves to a normal FAILED outcome rather
- *     than an unhandled rejection.
+ *   - Only the slow part — the actual media-tool execution and its
+ *     resulting `captureForTool` — is deferred into a batch and dispatched
+ *     concurrently via `mediaTool.batchTriggerAndWait` (NOT `Promise.all`/
+ *     `Promise.allSettled` over individual `triggerAndWait` calls —
+ *     Trigger.dev's own docs are explicit that parallel `triggerAndWait`
+ *     calls from one run are unsupported; each checkpoints its parent and
+ *     they do not actually fan out. `batchTriggerAndWait` is the documented
+ *     mechanism for this). `reserveAdditional`/`captureForTool` are each
+ *     their own atomic, row-locked (`FOR UPDATE`) transaction
+ *     (src/services/credits.ts) — safe to issue concurrently against the
+ *     same CreditHold row with no read-then-write race, since admission for
+ *     the parallelized calls was already decided serially above.
+ *   - Failure isolation is per-item, not per-batch: a `!run.ok` entry in
+ *     `batchTriggerAndWait`'s response becomes a normal FAILED
+ *     `tool_result` for that call alone, never an unhandled rejection or a
+ *     thrown error that could abort sibling results already in the batch.
  *   - Once a batch settles, its `tool_result` blocks/stream writes/persist
  *     checkpoints are still applied strictly in original call order — never
  *     completion-race order — so persisted message content is byte-for-byte
  *     reproducible regardless of which tool call actually finished first.
+ *   - A batch is capped at `MAX_PARALLEL_TOOL_DISPATCH` items and chunked
+ *     if a round emits more, bounding worst-case fan-out from a single
+ *     model round.
  *   - A batch is always flushed (awaited to completion) before any call
- *     that suspends the whole Trigger.dev run (`ask_user`, or a
- *     credit-approval waitpoint) — those inherently serialize the turn
- *     around a human response, so nothing is gained by leaving a prior
- *     batch in flight across that boundary, and flushing first preserves
- *     the exact pre-parallel relative ordering across such a boundary.
+ *     that suspends the whole Trigger.dev run (`ask_user`, or the
+ *     round-level credit-approval waitpoint) — those inherently serialize
+ *     the turn around a human response, so nothing is gained by leaving a
+ *     prior batch in flight across that boundary, and flushing first
+ *     preserves the exact pre-parallel relative ordering across such a
+ *     boundary.
+ *
+ * Credit approval is a SINGLE waitpoint per round, not per call (2026-08-29
+ * fix — see `.claude/specs/S7-agent-runtime.md` §A.10): a per-call waitpoint
+ * previously flushed the pending batch on every over-threshold call, so the
+ * batch could never hold more than one item and parallelism was impossible
+ * for any tool whose estimate crosses `APPROVAL_CREDIT_THRESHOLD` (which for
+ * `generate_image` is always). A pre-pass over the round's calls collects
+ * every one needing approval that ISN'T already decided this run (see
+ * `loadConsent` below) and raises one waitpoint listing all of them; the
+ * user approves or declines the whole round at once. Every call also
+ * consults a durable, per-`AgentRun`, per-tool-name consent memo built from
+ * this run's own prior resolved CREDIT_APPROVAL waitpoints, so a tool
+ * already approved or declined once is never re-prompted in a later round
+ * of the same run — this is a hard product requirement (do not regress the
+ * prior production bug where the approval overlay reopened after the user
+ * had already responded; see `resolvedWaitpointIds` in
+ * frontend/src/hooks/use-active-run.ts for the frontend half of that
+ * guarantee, which this consent memo is the backend half of).
  */
 function buildToolExecutor(ctx: BuildExecutorContext) {
   const { runId, chatId, userId, traceId, write, nextIndex, persistNow, assembler } = ctx;
@@ -257,6 +291,39 @@ function buildToolExecutor(ctx: BuildExecutorContext) {
   function allowedUrls(): Promise<Set<string>> {
     if (!allowedUrlsPromise) allowedUrlsPromise = getAllowedAssetUrls(chatId);
     return allowedUrlsPromise;
+  }
+
+  // Durable per-run, per-tool-name consent memo (2026-08-29 fix): a tool
+  // already approved or declined once in this AgentRun must never be
+  // re-prompted in a later round of the same run. Built once per turn (not
+  // per round — a fresh `buildToolExecutor` closure is created once per
+  // `agent-turn` task attempt, and its returned function is invoked once
+  // per round within that attempt) from this run's own prior resolved
+  // CREDIT_APPROVAL waitpoints. `orderBy: createdAt asc` + "first decision
+  // wins" below makes the memo deterministic even in the unreachable case
+  // of two rows ever naming the same tool. An EXPIRED waitpoint counts as a
+  // decision (not approved) — otherwise an expired approval would re-prompt
+  // the very next round and could loop.
+  let consentPromise: Promise<Map<string, boolean>> | null = null;
+  function loadConsent(): Promise<Map<string, boolean>> {
+    if (!consentPromise) {
+      consentPromise = (async () => {
+        const rows = await prisma.waitpoint.findMany({
+          where: { agentRunId: runId, kind: "CREDIT_APPROVAL", status: { in: ["COMPLETED", "EXPIRED"] } },
+          orderBy: { createdAt: "asc" },
+        });
+        const decided = new Map<string, boolean>();
+        for (const row of rows) {
+          const approved = (row.resolvedPayload as { approved?: boolean } | null)?.approved === true;
+          const calls = (row.requestPayload as { calls?: CreditApprovalCall[] } | null)?.calls ?? [];
+          for (const call of calls) {
+            if (!decided.has(call.toolName)) decided.set(call.toolName, approved);
+          }
+        }
+        return decided;
+      })();
+    }
+    return consentPromise;
   }
 
   // Every checkpoint in this executor must stop the tool loop the same way
@@ -315,25 +382,20 @@ function buildToolExecutor(ctx: BuildExecutorContext) {
     | { kind: "task_failed"; errorMessage: string; durationMs: number }
     | { kind: "success"; output: MediaToolTaskResult };
 
-  // Never throws — every failure mode (a reported `{ ok: false }`, or the
-  // triggerAndWait/capture call itself throwing) is converted into a
-  // DispatchOutcome so Promise.allSettled's rejection branch is only ever a
-  // defensive backstop, not the normal failure path.
-  async function dispatchOne(runId: string, userId: string, item: PendingDispatch): Promise<DispatchOutcome> {
+  // Resolves one batchTriggerAndWait run entry into a DispatchOutcome.
+  // Never throws itself — a `!run.ok` entry becomes a normal FAILED
+  // outcome for that item alone, never an unhandled rejection or a thrown
+  // error that could abort sibling results already in the batch.
+  async function resolveDispatch(runId: string, userId: string, item: PendingDispatch, run: { ok: boolean; output?: MediaToolTaskResult }): Promise<DispatchOutcome> {
     try {
-      const taskResult = await mediaTool.triggerAndWait(
-        { toolInvocationId: item.invocationId },
-        { idempotencyKey: item.invocationId, concurrencyKey: userId },
-      );
-
-      if (!taskResult.ok) {
+      if (!run.ok || !run.output) {
         const errorMessage = "The tool could not be completed.";
         const durationMs = Date.now() - item.invocationCreatedAt.getTime();
         await markToolFailed({ toolInvocationId: item.invocationId, errorCode: "tool_task_failed", errorMessage, durationMs });
         return { kind: "task_failed", errorMessage, durationMs };
       }
 
-      const output = taskResult.output;
+      const output = run.output;
       // Capture is always at the tool's reported creditUsed, never the
       // pre-dispatch estimate (D2 / 00-master-spec.md §4 scenario 1) —
       // gated on COMPLETED, not merely a positive amount, per
@@ -350,9 +412,9 @@ function buildToolExecutor(ctx: BuildExecutorContext) {
       }
       return { kind: "success", output };
     } catch {
-      // Defensive: an unexpected throw here (rather than a reported
-      // `{ ok: false }`) must still resolve to a normal FAILED outcome, not
-      // propagate and risk cancelling/orphaning sibling dispatches.
+      // Defensive: an unexpected throw here (e.g. captureForTool itself
+      // throwing) must still resolve to a normal FAILED outcome, not
+      // propagate and risk aborting sibling dispatches in the same batch.
       const errorMessage = "The tool could not be completed.";
       const durationMs = Date.now() - item.invocationCreatedAt.getTime();
       await markToolFailed({ toolInvocationId: item.invocationId, errorCode: "tool_task_failed", errorMessage, durationMs }).catch(() => {});
@@ -369,7 +431,8 @@ function buildToolExecutor(ctx: BuildExecutorContext) {
     const results: ToolExecutionResult[] = new Array(calls.length);
     let pending: PendingDispatch[] = [];
 
-    // Awaits every queued dispatch concurrently, then applies each one's
+    // Dispatches every queued call concurrently via batchTriggerAndWait
+    // (chunked at MAX_PARALLEL_TOOL_DISPATCH), then applies each one's
     // tool_result block/stream write/persist checkpoint strictly in
     // original call order — never completion-race order — so persisted
     // message content stays deterministic regardless of which tool call
@@ -378,16 +441,29 @@ function buildToolExecutor(ctx: BuildExecutorContext) {
       if (pending.length === 0) return;
       const batch = pending;
       pending = [];
-      const settled = await Promise.allSettled(batch.map((item) => dispatchOne(runId, userId, item)));
+
+      // Chunked, not one giant batchTriggerAndWait call, so a round with
+      // more calls than the cap still bounds worst-case concurrent fan-out;
+      // chunks are awaited sequentially (each chunk is itself fully
+      // concurrent internally).
+      const outcomes: DispatchOutcome[] = new Array(batch.length);
+      for (let chunkStart = 0; chunkStart < batch.length; chunkStart += MAX_PARALLEL_TOOL_DISPATCH) {
+        const chunk = batch.slice(chunkStart, chunkStart + MAX_PARALLEL_TOOL_DISPATCH);
+        const response = await mediaTool.batchTriggerAndWait(
+          chunk.map((item) => ({
+            payload: { toolInvocationId: item.invocationId },
+            options: { idempotencyKey: item.invocationId, concurrencyKey: userId },
+          })),
+        );
+        const resolved = await Promise.all(
+          chunk.map((item, i) => resolveDispatch(runId, userId, item, response.runs[i])),
+        );
+        for (let i = 0; i < chunk.length; i++) outcomes[chunkStart + i] = resolved[i];
+      }
 
       for (let i = 0; i < batch.length; i++) {
         const item = batch[i];
-        const outcome = settled[i];
-        // dispatchOne never itself throws — a `rejected` entry here would
-        // mean a genuine bug, not a tool failure, so it's surfaced rather
-        // than silently swallowed.
-        if (outcome.status === "rejected") throw outcome.reason;
-        const result = outcome.value;
+        const result = outcomes[i];
         const call = item.call;
 
         if (result.kind === "task_failed") {
@@ -447,6 +523,86 @@ function buildToolExecutor(ctx: BuildExecutorContext) {
           isError,
         };
       }
+    }
+
+    // Pre-pass (2026-08-29 fix): decide — BEFORE touching any per-call
+    // state — whether this round needs a credit-approval waitpoint at all,
+    // and if so, raise exactly ONE for the whole round rather than one per
+    // over-threshold call. A pure read: no ToolInvocation rows, no credit
+    // holds, no dispatch. A call already decided in an earlier round of
+    // this same AgentRun (`loadConsent()`) is never re-asked. This is the
+    // ONLY place in this executor that may raise a CREDIT_APPROVAL
+    // waitpoint; the main loop below only ever performs the cheap,
+    // already-resolved consent check.
+    const consent = await loadConsent();
+    const needsApproval: { callIndex: number; call: ResolvedToolCall; toolName: string; estimate: number }[] = [];
+    for (const [callIndex, call] of calls.entries()) {
+      if (call.name === ASK_USER_TOOL_NAME) continue;
+      const tool = getToolDefinition(call.name);
+      if (!tool || tool.kind === "local") continue;
+      const parsedInput = tool.inputSchema.safeParse(call.args);
+      if (!parsedInput.success) continue; // fails naturally in the main loop below
+      const estimate = tool.estimateCredits(parsedInput.data);
+      if (estimate > APPROVAL_CREDIT_THRESHOLD && !consent.has(tool.name)) {
+        needsApproval.push({ callIndex, call, toolName: tool.name, estimate });
+      }
+    }
+
+    if (needsApproval.length > 0) {
+      const token = await wait.createToken({
+        timeout: new Date(Date.now() + WAITPOINT_TIMEOUT_MS),
+        idempotencyKey: `waitpoint:${runId}:round:${turnIndex}`,
+      });
+
+      const roundCalls: CreditApprovalCall[] = needsApproval.map((c) => ({
+        toolCallId: c.call.id,
+        toolName: c.toolName,
+        estimatedCredits: c.estimate,
+      }));
+      const totalEstimate = needsApproval.reduce((sum, c) => sum + c.estimate, 0);
+
+      const created = await prisma.$transaction((tx) =>
+        createWaitpoint(tx, {
+          runId,
+          kind: "CREDIT_APPROVAL",
+          requestPayload: { calls: roundCalls, estimatedCredits: totalEstimate, threshold: APPROVAL_CREDIT_THRESHOLD },
+          triggerTokenId: token.id,
+          expiresAt: new Date(Date.now() + WAITPOINT_TIMEOUT_MS),
+        }),
+      );
+      const waitpointRow = await prisma.waitpoint.findUniqueOrThrow({ where: { id: created.id } });
+      write({ index: nextIndex(), type: "waitpoint", waitpoint: toWaitpointDTO(waitpointRow) });
+      await persistOrStop();
+
+      const result = await wait.forToken<unknown>(token.id);
+
+      // Never trust `result.output`/`wait.forToken`'s own resume payload
+      // for the approval decision — re-read the DB row directly, both
+      // because a timed-out `!result.ok` and a resolved-but-rejected
+      // waitpoint must be handled identically, and because the row is the
+      // one place `respondToWaitpoint` actually wrote the decision.
+      let approved = false;
+      if (result.ok) {
+        const resolved = await prisma.waitpoint.findUnique({ where: { id: created.id } });
+        approved = (resolved?.resolvedPayload as { approved?: boolean } | null)?.approved === true;
+      }
+
+      // Record the round's decision in the shared consent memo immediately
+      // — `consent` is the same Map instance `loadConsent()` caches, so
+      // later rounds of this same turn attempt see it without a query.
+      for (const c of needsApproval) consent.set(c.toolName, approved);
+
+      // 2026-08-29 fix: flip the run back to "running" unconditionally
+      // after the wait resolves — regardless of the approval decision.
+      // The prior per-call code only did this on the approved branch,
+      // which meant a DECLINED round left `AgentRun.status` stuck at
+      // "waiting" while the turn kept executing (matches ask_user's own,
+      // correct, unconditional pattern below instead).
+      const runAfterWait = await prisma.agentRun.findUniqueOrThrow({ where: { id: runId } });
+      if (runAfterWait.status !== "waiting" && runAfterWait.status !== "running") {
+        throw new Error("Run is no longer active; another process finalized it.");
+      }
+      await prisma.agentRun.updateMany({ where: { id: runId, status: "waiting" }, data: { status: "running" } });
     }
 
     for (const [callIndex, call] of calls.entries()) {
@@ -598,64 +754,21 @@ function buildToolExecutor(ctx: BuildExecutorContext) {
 
       const estimate = tool.estimateCredits(parsedInput.data);
 
-      // S6 (.claude/specs/S6-reliability-implementation-plan.md §6.3/§7.1):
-      // a pre-dispatch estimate over the threshold suspends the run on a
-      // CREDIT_APPROVAL waitpoint instead of dispatching immediately —
-      // zero compute burned while idle, since wait.forToken() actually
-      // suspends the Trigger.dev run.
-      if (estimate > APPROVAL_CREDIT_THRESHOLD) {
-        // Same reasoning as the ask_user boundary above — a credit-approval
-        // waitpoint also suspends the whole run, so flush before crossing it.
-        await flushPending();
-        const token = await wait.createToken({
-          timeout: new Date(Date.now() + WAITPOINT_TIMEOUT_MS),
-          idempotencyKey: `waitpoint:${runId}:${call.id}`,
-        });
-
-        const created = await prisma.$transaction((tx) =>
-          createWaitpoint(tx, {
-            runId,
-            kind: "CREDIT_APPROVAL",
-            requestPayload: { toolName: tool.name, estimatedCredits: estimate, threshold: APPROVAL_CREDIT_THRESHOLD },
-            triggerTokenId: token.id,
-            expiresAt: new Date(Date.now() + WAITPOINT_TIMEOUT_MS),
-          }),
+      // 2026-08-29 fix: the round-level waitpoint (if this round needed
+      // one at all) was already raised and resolved in the pre-pass above,
+      // before this loop started — this is now a cheap, non-suspending
+      // consent check, never a suspend point itself. `consent.get(...) !==
+      // true` also correctly fails a call whose tool was decided (approved
+      // or declined) in an EARLIER round of this same run, without ever
+      // asking again.
+      if (estimate > APPROVAL_CREDIT_THRESHOLD && consent.get(tool.name) !== true) {
+        results[callIndex] = await failWithoutInvocation(
+          call.id,
+          tool.name,
+          "The user did not approve this action.",
+          sanitizedInput,
         );
-        const waitpointRow = await prisma.waitpoint.findUniqueOrThrow({ where: { id: created.id } });
-        write({ index: nextIndex(), type: "waitpoint", waitpoint: toWaitpointDTO(waitpointRow) });
-        await persistOrStop();
-
-        const result = await wait.forToken<unknown>(token.id);
-
-        // Never trust `result.output`/`wait.forToken`'s own resume payload
-        // for the approval decision — re-read the DB row directly, both
-        // because a timed-out `!result.ok` and a resolved-but-rejected
-        // waitpoint must be handled identically, and because the row is the
-        // one place `respondToWaitpoint` actually wrote the decision.
-        let approved = false;
-        if (result.ok) {
-          const resolved = await prisma.waitpoint.findUnique({ where: { id: created.id } });
-          approved = (resolved?.resolvedPayload as { approved?: boolean } | null)?.approved === true;
-        }
-
-        if (!approved) {
-          results[callIndex] = await failWithoutInvocation(
-            call.id,
-            tool.name,
-            "The user did not approve this action.",
-            sanitizedInput,
-          );
-          continue;
-        }
-
-        // The run may have been cancelled or expired-and-failed by the
-        // sweep while suspended — do not proceed with dispatch for a run
-        // another process already finalized.
-        const runAfterWait = await prisma.agentRun.findUniqueOrThrow({ where: { id: runId } });
-        if (runAfterWait.status !== "waiting" && runAfterWait.status !== "running") {
-          throw new Error("Run is no longer active; another process finalized it.");
-        }
-        await prisma.agentRun.updateMany({ where: { id: runId, status: "waiting" }, data: { status: "running" } });
+        continue;
       }
 
       const invocation = await prisma.toolInvocation.create({

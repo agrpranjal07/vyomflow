@@ -29,7 +29,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ runId: s
   const toolInvocations = await listToolInvocationDTOs(reconciled.id);
   // S6 (§7.1) — reload-recovery for an in-progress approval/clarification,
   // same pattern as toolInvocations above.
-  const pendingWaitpointRow = await prisma.waitpoint.findFirst({ where: { agentRunId: reconciled.id, status: "PENDING" } });
+  const pendingWaitpointRow = await prisma.waitpoint.findFirst({
+    where: { agentRunId: reconciled.id, status: "PENDING" },
+    orderBy: { createdAt: "desc" },
+  });
   const pendingWaitpoint = pendingWaitpointRow ? toWaitpointDTO(pendingWaitpointRow) : null;
   return json(AgentRunDTOSchema.parse(toAgentRunDTO(reconciled, toolInvocations, pendingWaitpoint)));
 }

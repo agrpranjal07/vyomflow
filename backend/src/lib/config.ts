@@ -347,15 +347,27 @@ export const AGENT_TURN_MAX_DURATION_S = MEDIA_TOOL_TASK_MAX_DURATION_S + 60;
 export const AGENT_TURN_QUEUE_CONCURRENCY = 5;
 
 /**
- * Matched to AGENT_TURN_QUEUE_CONCURRENCY on purpose. `buildToolExecutor`
- * (src/trigger/turn.ts) runs a round's tool calls sequentially, so one user's
- * in-flight media-tool children can never exceed their in-flight turns —
- * meaning this limit is a defense-in-depth backstop today, not an active
- * throttle. It becomes the real limiter the moment tool dispatch within a
- * turn is parallelized, which is exactly when it should be raised
- * deliberately rather than discovered as a mystery stall.
+ * Caps how many media-tool child dispatches one round's `flushPending()`
+ * batches into a single `batchTriggerAndWait` call (backend/src/trigger/
+ * turn.ts) — bounds worst-case fan-out from a single model round so an
+ * unbounded number of model-emitted tool calls can't flood the queue or
+ * exceed Trigger.dev's own batch item cap.
  */
-export const MEDIA_TOOL_QUEUE_CONCURRENCY = AGENT_TURN_QUEUE_CONCURRENCY;
+export const MAX_PARALLEL_TOOL_DISPATCH = 5;
+
+/**
+ * PER-USER limit on concurrent media-tool children, via `concurrencyKey:
+ * userId` at every trigger site (same fairness reasoning as
+ * AGENT_TURN_QUEUE_CONCURRENCY above). `buildToolExecutor`
+ * (src/trigger/turn.ts) now fans a round's reserved calls out concurrently
+ * via `batchTriggerAndWait`, capped per round at MAX_PARALLEL_TOOL_DISPATCH
+ * — so one user's turns can each fan out fully without queueing behind
+ * each other and silently re-serializing what should be parallel. Sized to
+ * the worst case: every one of a user's concurrently in-flight turns
+ * (AGENT_TURN_QUEUE_CONCURRENCY) each fully using its per-round batch cap
+ * (MAX_PARALLEL_TOOL_DISPATCH) at the same instant.
+ */
+export const MEDIA_TOOL_QUEUE_CONCURRENCY = AGENT_TURN_QUEUE_CONCURRENCY * MAX_PARALLEL_TOOL_DISPATCH;
 
 /**
  * S8 Phase 6 — signed outbound webhooks. Hard timeout on the single

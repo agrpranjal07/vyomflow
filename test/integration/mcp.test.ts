@@ -176,7 +176,7 @@ describe("MCP server — transport + tool surface", () => {
       data: {
         agentRunId: runId,
         kind: "CREDIT_APPROVAL",
-        requestPayload: { toolName: "crop_image", estimatedCredits: 0.1, threshold: 0.08 },
+        requestPayload: { calls: [{ toolCallId: "call_1", toolName: "crop_image", estimatedCredits: 0.1 }], estimatedCredits: 0.1, threshold: 0.08 },
         triggerTokenId: `wpt_mcp_${runId}`,
         expiresAt: new Date(Date.now() + 60_000),
       },

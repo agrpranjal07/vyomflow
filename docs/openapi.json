@@ -1439,8 +1439,29 @@
                       "requestPayload": {
                         "type": "object",
                         "properties": {
-                          "toolName": {
-                            "type": "string"
+                          "calls": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "toolCallId": {
+                                  "type": "string"
+                                },
+                                "toolName": {
+                                  "type": "string"
+                                },
+                                "estimatedCredits": {
+                                  "type": "number",
+                                  "minimum": 0
+                                }
+                              },
+                              "required": [
+                                "toolCallId",
+                                "toolName",
+                                "estimatedCredits"
+                              ]
+                            },
+                            "minItems": 1
                           },
                           "estimatedCredits": {
                             "type": "number",
@@ -1452,7 +1473,7 @@
                           }
                         },
                         "required": [
-                          "toolName",
+                          "calls",
                           "estimatedCredits",
                           "threshold"
                         ]
@@ -1870,8 +1891,29 @@
                   "requestPayload": {
                     "type": "object",
                     "properties": {
-                      "toolName": {
-                        "type": "string"
+                      "calls": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "toolCallId": {
+                              "type": "string"
+                            },
+                            "toolName": {
+                              "type": "string"
+                            },
+                            "estimatedCredits": {
+                              "type": "number",
+                              "minimum": 0
+                            }
+                          },
+                          "required": [
+                            "toolCallId",
+                            "toolName",
+                            "estimatedCredits"
+                          ]
+                        },
+                        "minItems": 1
                       },
                       "estimatedCredits": {
                         "type": "number",
@@ -1883,7 +1925,7 @@
                       }
                     },
                     "required": [
-                      "toolName",
+                      "calls",
                       "estimatedCredits",
                       "threshold"
                     ]
@@ -2084,8 +2126,29 @@
               "requestPayload": {
                 "type": "object",
                 "properties": {
-                  "toolName": {
-                    "type": "string"
+                  "calls": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "toolCallId": {
+                          "type": "string"
+                        },
+                        "toolName": {
+                          "type": "string"
+                        },
+                        "estimatedCredits": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "toolCallId",
+                        "toolName",
+                        "estimatedCredits"
+                      ]
+                    },
+                    "minItems": 1
                   },
                   "estimatedCredits": {
                     "type": "number",
@@ -2097,7 +2160,7 @@
                   }
                 },
                 "required": [
-                  "toolName",
+                  "calls",
                   "estimatedCredits",
                   "threshold"
                 ]
@@ -3503,8 +3566,29 @@
                       "requestPayload": {
                         "type": "object",
                         "properties": {
-                          "toolName": {
-                            "type": "string"
+                          "calls": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "toolCallId": {
+                                  "type": "string"
+                                },
+                                "toolName": {
+                                  "type": "string"
+                                },
+                                "estimatedCredits": {
+                                  "type": "number",
+                                  "minimum": 0
+                                }
+                              },
+                              "required": [
+                                "toolCallId",
+                                "toolName",
+                                "estimatedCredits"
+                              ]
+                            },
+                            "minItems": 1
                           },
                           "estimatedCredits": {
                             "type": "number",
@@ -3516,7 +3600,7 @@
                           }
                         },
                         "required": [
-                          "toolName",
+                          "calls",
                           "estimatedCredits",
                           "threshold"
                         ]

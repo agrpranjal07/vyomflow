@@ -1,4 +1,4 @@
-// GENERATED — do not edit. Source: 1173916808585c5b39a4dfd2d96256d6ec489be5:src/contracts/webhooks.ts
+// GENERATED — do not edit. Source: c9a2eb298ce02df0d3dd251bf7973b1da3131683:src/contracts/webhooks.ts
 /**
  * S8 Phase 6 — signed outbound webhooks (minimal scope, per the plan: one
  * `WebhookEndpoint` row per user, no per-event subscriptions, no UI). Pure

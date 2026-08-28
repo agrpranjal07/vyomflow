@@ -10,11 +10,21 @@ import path from "path";
 
 vi.mock("@/server/dispatch", () => import("../support/trigger-mock"));
 
-const { runAgentLoop, streamWrite, triggerAndWait } = vi.hoisted(() => ({
-  runAgentLoop: vi.fn(),
-  streamWrite: vi.fn(),
-  triggerAndWait: vi.fn(),
-}));
+const { runAgentLoop, streamWrite, triggerAndWait, batchTriggerAndWait } = vi.hoisted(() => {
+  const triggerAndWaitFn = vi.fn();
+  return {
+    runAgentLoop: vi.fn(),
+    streamWrite: vi.fn(),
+    triggerAndWait: triggerAndWaitFn,
+    // Same triggerAndWait-delegating shim as tool-orchestration.test.ts —
+    // this suite never actually dispatches to media-tool (it only exercises
+    // local/skill tools), but turn.ts now calls `mediaTool.batchTriggerAndWait`
+    // rather than `triggerAndWait`, so the mock must expose it regardless.
+    batchTriggerAndWait: vi.fn(async (items: { payload: unknown; options?: unknown }[]) => ({
+      runs: await Promise.all(items.map((item) => triggerAndWaitFn(item.payload, item.options))),
+    })),
+  };
+});
 vi.mock("@/server/agent/loop", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/server/agent/loop")>();
   return { ...actual, runAgentLoop };
@@ -26,7 +36,7 @@ vi.mock("@/trigger/streams", () => ({
     }),
   },
 }));
-vi.mock("@/trigger/tool", () => ({ mediaTool: { triggerAndWait } }));
+vi.mock("@/trigger/tool", () => ({ mediaTool: { triggerAndWait, batchTriggerAndWait } }));
 
 import { POST as createChat } from "@/app/api/v1/chats/route";
 import { POST as sendMessage } from "@/app/api/v1/chats/[chatId]/messages/route";

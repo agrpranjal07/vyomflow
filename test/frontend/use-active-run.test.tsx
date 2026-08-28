@@ -4,7 +4,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useActiveRun } from "@/hooks/use-active-run";
 import * as runsService from "@/services/runs";
+import * as waitpointsService from "@/services/waitpoints";
 import { CreditPaywallProvider } from "@/components/credits/paywall-provider";
+import type { WaitpointDTO } from "@/contracts/waitpoints";
 
 // useActiveRun only needs useCreditPaywall()'s context to be present here —
 // these tests don't exercise the dialog's own rendering (see
@@ -41,6 +43,31 @@ vi.mock("@/services/runs", () => ({
   cancelRun: vi.fn(),
 }));
 
+vi.mock("@/services/waitpoints", () => ({
+  respondToWaitpoint: vi.fn(),
+}));
+
+// Same fixture shape as approval-overlay.test.tsx's creditApprovalWaitpoint
+// (contracts/waitpoints.ts's CREDIT_APPROVAL discriminant, 2026-08-29 round-
+// level payload shape).
+function makeWaitpoint(overrides: Partial<WaitpointDTO> = {}): WaitpointDTO {
+  return {
+    id: "wp1",
+    agentRunId: "run1",
+    kind: "CREDIT_APPROVAL",
+    status: "PENDING",
+    requestPayload: {
+      calls: [{ toolCallId: "call_1", toolName: "gpt_image_2", estimatedCredits: 0.1 }],
+      estimatedCredits: 0.1,
+      threshold: 0.08,
+    },
+    resolvedPayload: null,
+    expiresAt: "2026-08-21T21:00:00.000Z",
+    resolvedAt: null,
+    ...overrides,
+  } as WaitpointDTO;
+}
+
 function makeRun(overrides: Partial<AgentRunDTO> = {}): AgentRunDTO {
   return {
     id: "run1",
@@ -60,6 +87,7 @@ function makeRun(overrides: Partial<AgentRunDTO> = {}): AgentRunDTO {
     finishedAt: null,
     toolInvocations: [],
     totalCreditsUsed: 0,
+    pendingWaitpoint: null,
     ...overrides,
   };
 }
@@ -115,6 +143,7 @@ beforeEach(() => {
   vi.mocked(runsService.getRun).mockReset();
   vi.mocked(runsService.getRealtimeToken).mockReset();
   vi.mocked(runsService.cancelRun).mockReset();
+  vi.mocked(waitpointsService.respondToWaitpoint).mockReset();
   vi.useFakeTimers();
 });
 
@@ -416,6 +445,125 @@ describe("useActiveRun — terminal-detection race across a chat switch", () => 
     expect(result.current.activeRun?.id).toBe("run2");
     expect(result.current.isActive).toBe(true);
     expect(result.current.lastRunError).toBeNull();
+  });
+});
+
+describe("pendingWaitpoint — resolvedWaitpointIds guard (regression)", () => {
+  it("the original production bug: a resolved waitpoint's stale PENDING stream snapshot does not reopen the overlay on later stream parts", async () => {
+    vi.mocked(waitpointsService.respondToWaitpoint).mockResolvedValue(makeWaitpoint({ status: "COMPLETED" }));
+    const { result } = renderHook(() => useActiveRun("chat1", null), { wrapper });
+    act(() => result.current.start(makeRun(), makeRealtime()));
+
+    // Backend emits exactly one "waitpoint" stream part, always PENDING.
+    setStream({ parts: [{ index: 0, type: "waitpoint", waitpoint: makeWaitpoint() }] });
+    await act(async () => {});
+    expect(result.current.pendingWaitpoint?.id).toBe("wp1");
+
+    // The human responds — resolvedWaitpointIds records "wp1" and the
+    // service call resolves non-PENDING.
+    await act(async () => {
+      await result.current.respond("wp1", { kind: "CREDIT_APPROVAL", approved: true });
+    });
+    expect(result.current.pendingWaitpoint).toBeNull();
+
+    // The approved tool's own subsequent stream deltas re-run this effect
+    // with `stream.parts` unchanged in content but a fresh array reference —
+    // the exact trigger observed live for the bug.
+    setStream({
+      parts: [
+        { index: 0, type: "waitpoint", waitpoint: makeWaitpoint() },
+        { index: 1, type: "tool", toolInvocationId: "t1", name: "gpt_image_2", status: "DISPATCHING" },
+      ],
+    });
+    await act(async () => {});
+    expect(result.current.pendingWaitpoint).toBeNull();
+  });
+
+  it("the REST-path hole this fix closed: a stale REST snapshot reporting the already-resolved waitpoint as PENDING must not reset pendingWaitpoint", async () => {
+    vi.mocked(waitpointsService.respondToWaitpoint).mockResolvedValue(makeWaitpoint({ status: "COMPLETED" }));
+    const { result } = renderHook(() => useActiveRun("chat1", null), { wrapper });
+    act(() => result.current.start(makeRun(), makeRealtime()));
+
+    setStream({ parts: [{ index: 0, type: "waitpoint", waitpoint: makeWaitpoint() }] });
+    await act(async () => {});
+    expect(result.current.pendingWaitpoint?.id).toBe("wp1");
+
+    await act(async () => {
+      await result.current.respond("wp1", { kind: "CREDIT_APPROVAL", approved: true });
+    });
+    expect(result.current.pendingWaitpoint).toBeNull();
+
+    // Drive the watchdog-reconcile REST path (same mechanism as the
+    // "bounded reconnection" describe block above): a disconnect forces a
+    // REST reconcile whose AgentRunDTO snapshot still reports "wp1" PENDING
+    // — a genuine race, since the REST fetch can be in flight before
+    // `respond()`'s POST even lands.
+    vi.mocked(runsService.getRun).mockResolvedValue(makeRun({ pendingWaitpoint: makeWaitpoint({ status: "PENDING" }) }));
+    setStream({ error: new Error("dropped") });
+    await tick(WATCHDOG_INTERVAL_MS);
+
+    expect(runsService.getRun).toHaveBeenCalled();
+    expect(result.current.pendingWaitpoint).toBeNull();
+  });
+
+  it("a failed respond() POST still suppresses the stale snapshot — the id is recorded before the POST, not after it resolves", async () => {
+    vi.mocked(waitpointsService.respondToWaitpoint).mockRejectedValue(new Error("network failure"));
+    const { result } = renderHook(() => useActiveRun("chat1", null), { wrapper });
+    act(() => result.current.start(makeRun(), makeRealtime()));
+
+    // No stream-derived snapshot has landed yet in this scenario —
+    // `pendingWaitpoint` starts null, which is exactly what makes a later
+    // reopening observable: a failed respond() does NOT itself clear
+    // `pendingWaitpoint` (only a resolved, non-PENDING response does), so if
+    // the id weren't recorded until after the POST resolved, the stale
+    // snapshot below would flip it back to non-null.
+    let rejected: unknown;
+    await act(async () => {
+      try {
+        await result.current.respond("wp1", { kind: "CREDIT_APPROVAL", approved: true });
+      } catch (err) {
+        rejected = err;
+      }
+    });
+    expect(rejected).toBeInstanceOf(Error);
+    expect(result.current.pendingWaitpoint).toBeNull();
+
+    // A stale snapshot for that same id, still PENDING, now arrives via the
+    // watchdog-reconcile REST path — it must be suppressed, proving "wp1"
+    // was already recorded in `resolvedWaitpointIds` before the (still
+    // in-flight/failed) POST, not after it settled.
+    vi.mocked(runsService.getRun).mockResolvedValue(makeRun({ pendingWaitpoint: makeWaitpoint({ status: "PENDING" }) }));
+    setStream({ error: new Error("dropped") });
+    await tick(WATCHDOG_INTERVAL_MS);
+
+    expect(runsService.getRun).toHaveBeenCalled();
+    expect(result.current.pendingWaitpoint).toBeNull();
+  });
+
+  it("a genuinely new waitpoint (different id) still comes through normally after a prior one was resolved", async () => {
+    vi.mocked(waitpointsService.respondToWaitpoint).mockResolvedValue(makeWaitpoint({ status: "COMPLETED" }));
+    const { result } = renderHook(() => useActiveRun("chat1", null), { wrapper });
+    act(() => result.current.start(makeRun(), makeRealtime()));
+
+    setStream({ parts: [{ index: 0, type: "waitpoint", waitpoint: makeWaitpoint({ id: "wpA" }) }] });
+    await act(async () => {});
+    expect(result.current.pendingWaitpoint?.id).toBe("wpA");
+
+    await act(async () => {
+      await result.current.respond("wpA", { kind: "CREDIT_APPROVAL", approved: true });
+    });
+    expect(result.current.pendingWaitpoint).toBeNull();
+
+    // A different waitpoint id, still PENDING — must not be suppressed by
+    // the guard, which is keyed per-id.
+    setStream({
+      parts: [
+        { index: 0, type: "waitpoint", waitpoint: makeWaitpoint({ id: "wpA" }) },
+        { index: 1, type: "waitpoint", waitpoint: makeWaitpoint({ id: "wpB" }) },
+      ],
+    });
+    await act(async () => {});
+    expect(result.current.pendingWaitpoint?.id).toBe("wpB");
   });
 });
 

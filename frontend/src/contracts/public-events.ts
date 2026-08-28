@@ -1,4 +1,4 @@
-// GENERATED — do not edit. Source: 1173916808585c5b39a4dfd2d96256d6ec489be5:src/contracts/public-events.ts
+// GENERATED — do not edit. Source: c9a2eb298ce02df0d3dd251bf7973b1da3131683:src/contracts/public-events.ts
 /**
  * S8 — public SSE event schema for `GET /api/public/v1/runs/{runId}/stream`
  * (Phase 4 of the public-API-key plan). Deliberately NOT part of the

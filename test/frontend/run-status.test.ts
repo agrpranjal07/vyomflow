@@ -7,9 +7,11 @@ import {
   isTriggerTerminalStatus,
   mergeRestToolState,
   buildStreamedSegments,
+  latestWaitpointFromStream,
 } from "@/lib/run-status";
 import type { TurnStreamPart, ToolStreamPart } from "@/contracts/runs";
 import type { ToolInvocationDTO } from "@/contracts/tools";
+import type { WaitpointDTO } from "@/contracts/waitpoints";
 
 function toolInvocation(overrides: Partial<ToolInvocationDTO> = {}): ToolInvocationDTO {
   return {
@@ -290,5 +292,92 @@ describe("accumulateStreamedText / accumulateStreamedTools — dedupe under high
     expect(result.map((t) => t.toolInvocationId)).toEqual(Array.from({ length: N }, (_, i) => `tool-${i}`));
     // Every invocation resolved to its highest-index (COMPLETED) part, never a stale earlier status.
     expect(result.every((t) => t.status === "COMPLETED")).toBe(true);
+  });
+});
+
+function creditApprovalWaitpoint(overrides: Partial<WaitpointDTO> = {}): WaitpointDTO {
+  return {
+    id: "wp1",
+    agentRunId: "run1",
+    kind: "CREDIT_APPROVAL",
+    status: "PENDING",
+    requestPayload: {
+      calls: [{ toolCallId: "call_1", toolName: "gpt_image_2", estimatedCredits: 0.1 }],
+      estimatedCredits: 0.1,
+      threshold: 0.08,
+    },
+    resolvedPayload: null,
+    expiresAt: "2026-08-21T21:00:00.000Z",
+    resolvedAt: null,
+    ...overrides,
+  } as WaitpointDTO;
+}
+
+function clarificationWaitpoint(overrides: Partial<WaitpointDTO> = {}): WaitpointDTO {
+  return {
+    id: "wp2",
+    agentRunId: "run1",
+    kind: "CLARIFICATION",
+    status: "PENDING",
+    requestPayload: { question: "Which image should I edit?" },
+    resolvedPayload: null,
+    expiresAt: "2026-08-21T21:00:00.000Z",
+    resolvedAt: null,
+    ...overrides,
+  } as WaitpointDTO;
+}
+
+function waitpointPart(index: number, waitpoint: WaitpointDTO): TurnStreamPart {
+  return { type: "waitpoint", index, waitpoint } as unknown as TurnStreamPart;
+}
+
+describe("latestWaitpointFromStream", () => {
+  it("returns null for an empty parts array", () => {
+    expect(latestWaitpointFromStream([])).toBeNull();
+  });
+
+  it("returns null when parts contains only non-waitpoint parts", () => {
+    const parts: TurnStreamPart[] = [{ index: 0, type: "text", delta: "hello" }];
+    expect(latestWaitpointFromStream(parts)).toBeNull();
+  });
+
+  it("returns the single waitpoint part's waitpoint when there's exactly one", () => {
+    const wp = creditApprovalWaitpoint();
+    const parts: TurnStreamPart[] = [waitpointPart(0, wp)];
+    expect(latestWaitpointFromStream(parts)).toEqual(wp);
+  });
+
+  it("returns the higher-index waitpoint when two appear in ascending array order", () => {
+    const wp0 = creditApprovalWaitpoint({ id: "wp-a" });
+    const wp1 = clarificationWaitpoint({ id: "wp-b" });
+    const parts: TurnStreamPart[] = [waitpointPart(0, wp0), waitpointPart(1, wp1)];
+    expect(latestWaitpointFromStream(parts)).toEqual(wp1);
+  });
+
+  it("returns the higher-index waitpoint even when it appears FIRST in the array (highest index wins, not last-in-array)", () => {
+    const wpHigh = clarificationWaitpoint({ id: "wp-high" });
+    const wpLow = creditApprovalWaitpoint({ id: "wp-low" });
+    const parts: TurnStreamPart[] = [waitpointPart(5, wpHigh), waitpointPart(2, wpLow)];
+    expect(latestWaitpointFromStream(parts)).toEqual(wpHigh);
+  });
+
+  it("has NO status precedence: a higher-index COMPLETED waitpoint wins over a lower-index PENDING one that appears later in the array — intentional per the function's own doc comment (max-by-index, not 'prefer PENDING'); callers (use-active-run.ts) are responsible for status-aware handling on top of this", () => {
+    const completedHigh = creditApprovalWaitpoint({ id: "wp-completed", status: "COMPLETED" });
+    const pendingLow = clarificationWaitpoint({ id: "wp-pending", status: "PENDING" });
+    // Lower index (1) appears LAST in the array; higher index (3) appears FIRST.
+    const parts: TurnStreamPart[] = [waitpointPart(3, completedHigh), waitpointPart(1, pendingLow)];
+    expect(latestWaitpointFromStream(parts)).toEqual(completedHigh);
+  });
+
+  it("skips non-waitpoint parts while tracking the max across a mixed, realistic stream", () => {
+    const clarification = clarificationWaitpoint({ id: "wp-clarify" });
+    const creditApproval = creditApprovalWaitpoint({ id: "wp-credit" });
+    const parts: TurnStreamPart[] = [
+      { index: 0, type: "text", delta: "Before. " },
+      waitpointPart(2, clarification),
+      { index: 3, type: "text", delta: "After. " },
+      waitpointPart(5, creditApproval),
+    ];
+    expect(latestWaitpointFromStream(parts)).toEqual(creditApproval);
   });
 });

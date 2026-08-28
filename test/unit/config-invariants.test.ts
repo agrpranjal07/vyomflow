@@ -5,6 +5,8 @@ import {
   MEDIA_TOOL_EXEC_DEADLINE_MS,
   TRANSLOADIT_POLL_DEADLINE_MS,
   TOOL_ORPHAN_TIMEOUT_MS,
+  MAX_PARALLEL_TOOL_DISPATCH,
+  MEDIA_TOOL_QUEUE_CONCURRENCY,
 } from "@/lib/config";
 
 // S7 debt closure (§2.1/§9.5 T35, S6's own T29): the agent-turn task's own
@@ -40,5 +42,19 @@ describe("config — agent-turn vs. media-tool maxDuration relationship", () => 
   // its eventual real completion settles a row that's already terminal.
   it("TOOL_ORPHAN_TIMEOUT_MS is strictly greater than MEDIA_TOOL_TASK_MAX_DURATION_S", () => {
     expect(TOOL_ORPHAN_TIMEOUT_MS).toBeGreaterThan(MEDIA_TOOL_TASK_MAX_DURATION_S * 1000);
+  });
+});
+
+// Regression guard: one round's batchTriggerAndWait dispatches up to
+// MAX_PARALLEL_TOOL_DISPATCH media-tool tasks at once. If the queue
+// concurrency limit ever dropped below this per-round batch size, those
+// tasks would queue behind themselves, silently re-serializing what should
+// be parallel dispatch. This is the exact class of bug a 2026-08-29
+// production incident introduced via a different mechanism (per-call
+// approval waitpoint defeating batching), so this assertion prevents a
+// second recurrence via queue-concurrency misconfiguration.
+describe("config — media-tool queue concurrency vs. batch size", () => {
+  it("MEDIA_TOOL_QUEUE_CONCURRENCY is at least MAX_PARALLEL_TOOL_DISPATCH", () => {
+    expect(MEDIA_TOOL_QUEUE_CONCURRENCY).toBeGreaterThanOrEqual(MAX_PARALLEL_TOOL_DISPATCH);
   });
 });

@@ -80,20 +80,30 @@ function CreditApproval({
   onApprove,
   onDecline,
 }: {
-  requestPayload: { toolName: string; estimatedCredits: number; threshold: number };
+  requestPayload: {
+    calls: { toolCallId: string; toolName: string; estimatedCredits: number }[];
+    estimatedCredits: number;
+    threshold: number;
+  };
   pending: boolean;
   onApprove: () => void;
   onDecline: () => void;
 }) {
-  const { toolName, estimatedCredits, threshold } = requestPayload;
+  const { calls, estimatedCredits, threshold } = requestPayload;
   return (
-    <div className="flex items-center justify-between gap-3">
+    <div className="flex flex-col gap-2">
       <span className="flex items-center gap-2">
         <IconAlertTriangle className="size-4 shrink-0 text-text-warning" />
-        {/* Copy pattern per plan §6.2a — substituted verbatim, not paraphrased. */}
-        This step ({toolName}) will use ~{estimatedCredits}M credits (threshold {threshold}M) — continue?
+        This round will use ~{estimatedCredits}M credits (threshold {threshold}M) — continue?
       </span>
-      <span className="flex shrink-0 items-center gap-2">
+      <ul className="flex flex-col gap-1 pl-6 text-xs text-muted-foreground">
+        {calls.map((call) => (
+          <li key={call.toolCallId}>
+            {call.toolName} — ~{call.estimatedCredits}M credits
+          </li>
+        ))}
+      </ul>
+      <span className="flex shrink-0 items-center justify-end gap-2">
         <Button size="sm" variant="outline" disabled={pending} onClick={onDecline}>
           Decline
         </Button>

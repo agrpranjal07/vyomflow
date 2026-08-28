@@ -5,11 +5,30 @@ vi.mock("@/server/dispatch", () => import("../support/trigger-mock"));
 // suite needs, since executeAgentTurn now always composes the skill roster into the system prompt.
 vi.mock("@/server/skills/registry", () => ({ listSkillMetadata: vi.fn().mockResolvedValue([]) }));
 
-const { runAgentLoop, streamWrite, triggerAndWait } = vi.hoisted(() => ({
-  runAgentLoop: vi.fn(),
-  streamWrite: vi.fn(),
-  triggerAndWait: vi.fn(),
-}));
+const { runAgentLoop, streamWrite, triggerAndWait, batchTriggerAndWait } = vi.hoisted(() => {
+  const triggerAndWaitFn = vi.fn();
+  return {
+    runAgentLoop: vi.fn(),
+    streamWrite: vi.fn(),
+    triggerAndWait: triggerAndWaitFn,
+    // turn.ts dispatches a round's reserved calls via `mediaTool.batchTriggerAndWait`
+    // (2026-08-29 — batchTriggerAndWait is the Trigger.dev-documented mechanism for
+    // concurrent triggerAndWait-equivalent dispatch; parallel triggerAndWait calls
+    // are themselves unsupported). This default implementation delegates each batch
+    // item to the existing `triggerAndWait` mock and wraps the results as
+    // `{ runs: [...] }`, so every existing `triggerAndWait.mockImplementationOnce(...)`
+    // setup below keeps working unchanged for a round with one call — `items.map`
+    // invokes the callback synchronously in array order, so queued
+    // `mockImplementationOnce` results are still consumed in call order even though
+    // the underlying promises resolve concurrently. Tests asserting genuine
+    // parallelism (not the old bug's silent re-serialization) assert directly on
+    // `batchTriggerAndWait.mock.calls` — one call with N items proves a real batch,
+    // vs. N separate one-item calls proving the batching regressed.
+    batchTriggerAndWait: vi.fn(async (items: { payload: unknown; options?: unknown }[]) => ({
+      runs: await Promise.all(items.map((item) => triggerAndWaitFn(item.payload, item.options))),
+    })),
+  };
+});
 vi.mock("@/server/agent/loop", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/server/agent/loop")>();
   return { ...actual, runAgentLoop };
@@ -21,7 +40,7 @@ vi.mock("@/trigger/streams", () => ({
     }),
   },
 }));
-vi.mock("@/trigger/tool", () => ({ mediaTool: { triggerAndWait } }));
+vi.mock("@/trigger/tool", () => ({ mediaTool: { triggerAndWait, batchTriggerAndWait } }));
 
 import { POST as createChat } from "@/app/api/v1/chats/route";
 import { POST as sendMessage } from "@/app/api/v1/chats/[chatId]/messages/route";
@@ -94,6 +113,12 @@ beforeEach(() => {
   runAgentLoop.mockReset();
   streamWrite.mockReset();
   triggerAndWait.mockReset();
+  // `mockClear`, not `mockReset` — this must keep its default
+  // triggerAndWait-delegating implementation (set once in `vi.hoisted`
+  // above); a full reset would wipe that implementation and every test
+  // relying on it (i.e. every test that doesn't itself assert on
+  // batchTriggerAndWait) would start returning `undefined`.
+  batchTriggerAndWait.mockClear();
   // S6: crop_image's estimate (0.1) exceeds APPROVAL_CREDIT_THRESHOLD
   // (0.08) by design (.claude/specs/S6-reliability-implementation-plan.md
   // §7.1's config comment: chosen so at least one real tool crosses it),
@@ -640,13 +665,17 @@ describe("executeAgentTurn — tool orchestration", () => {
     expect(invocations[1].resultUrls).toEqual(["https://out.example.com/cropped.png"]);
 
     // Each tool's own capture is independently ledgered — no shared/merged
-    // credit-hold state between the two engines.
-    const captureRows = await testDb.creditLedger.findMany({ where: { runId: run.id, kind: "CAPTURE" }, orderBy: { createdAt: "asc" } });
+    // credit-hold state between the two engines. Keyed by toolInvocationId,
+    // not array position: both calls are now genuinely dispatched
+    // concurrently in one batch (2026-08-29 fix), so which capture's
+    // transaction commits — and is thus inserted — first is not guaranteed
+    // to match model-emitted call order; only the settled tool_use/
+    // tool_result block order above is guaranteed to be deterministic.
+    const captureRows = await testDb.creditLedger.findMany({ where: { runId: run.id, kind: "CAPTURE" } });
     expect(captureRows).toHaveLength(2);
-    expect(captureRows[0].toolInvocationId).toBe(invocations[0].id);
-    expect(captureRows[1].toolInvocationId).toBe(invocations[1].id);
-    expect(Number(captureRows[0].amount)).toBeCloseTo(0.1, 6);
-    expect(Number(captureRows[1].amount)).toBeCloseTo(0.05, 6);
+    const captureByInvocation = new Map(captureRows.map((row) => [row.toolInvocationId, row]));
+    expect(Number(captureByInvocation.get(invocations[0].id)?.amount)).toBeCloseTo(0.1, 6);
+    expect(Number(captureByInvocation.get(invocations[1].id)?.amount)).toBeCloseTo(0.05, 6);
 
     const hold = await testDb.creditHold.findUniqueOrThrow({ where: { runId: run.id } });
     expect(hold.status).toBe("CAPTURED");
@@ -747,5 +776,332 @@ describe("executeAgentTurn — tool orchestration", () => {
 
     const finalRun2 = await testDb.agentRun.findUniqueOrThrow({ where: { id: run2.id } });
     expect(finalRun2.status).toBe("completed");
+  });
+});
+
+// 2026-08-29 fix — production incident: three independent generate_image
+// calls in one round ran strictly sequentially (a Trigger.dev trace showed
+// waitpoint -> media-tool -> waitpoint -> media-tool -> waitpoint ->
+// media-tool with zero overlap), because the per-call CREDIT_APPROVAL
+// waitpoint's flushPending() drained the batch on every over-threshold
+// call before the next could be queued. These tests are the regression
+// guard: they fail against the old per-call-waitpoint code (batchTriggerAndWait
+// would be called N times with 1 item each, never once with N items; wall
+// time would be ~N*DELAY_MS, not ~DELAY_MS) and pass against the current
+// round-level-waitpoint + batchTriggerAndWait implementation.
+describe("executeAgentTurn — genuine parallel tool dispatch (2026-08-29 fix)", () => {
+  const PARALLEL_CALLS: ResolvedToolCall[] = [
+    { id: "call_a", name: "generate_image", args: { prompt: "a cat in a bathtub" } },
+    { id: "call_b", name: "generate_image", args: { prompt: "a lion on a tree" } },
+    { id: "call_c", name: "generate_image", args: { prompt: "an elephant riding a wave" } },
+  ];
+
+  function mockOneParallelRound(calls: ResolvedToolCall[]) {
+    runAgentLoop.mockImplementationOnce(async (params: RunAgentLoopParams) => {
+      const results = (await params.onToolCalls?.(calls, 0)) ?? [];
+      await params.onDelta({ index: 0, delta: "done." });
+      return {
+        outcome: "completed" as const,
+        text: "done.",
+        chunkCount: 1,
+        finishReason: "stop",
+        resolvedModel: "upstage/solar-pro-3:free",
+        usage: { promptTokens: 10, completionTokens: 2, costCredits: 0 },
+        toolResultsForAssertion: results,
+      };
+    });
+  }
+
+  it("three above-threshold calls in one round: exactly one waitpoint, one batched dispatch, genuinely overlapping intervals", async () => {
+    const userId = "user_tool_parallel_1";
+    const chat = await createChatAs(userId);
+    const { run, message } = await sendAs(userId, chat.id);
+    const dbUser = await testDb.user.findUniqueOrThrow({ where: { clerkUserId: userId } });
+    const payload = { runId: run.id, chatId: chat.id, userMessageId: message.id, userId: dbUser.id, requestedModel: run.requestedModel };
+
+    const DELAY_MS = 60;
+    const intervals: { start: number; end: number }[] = [];
+    triggerAndWait.mockImplementation(async ({ toolInvocationId }: { toolInvocationId: string }) => {
+      const start = Date.now();
+      await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
+      intervals.push({ start, end: Date.now() });
+      await testDb.toolInvocation.update({
+        where: { id: toolInvocationId },
+        data: { status: "COMPLETED", resultUrls: ["https://out.example.com/x.png"], creditUsed: 0.1, finishedAt: new Date() },
+      });
+      return { ok: true, output: { status: "COMPLETED", resultUrls: ["https://out.example.com/x.png"], creditUsedApp: 0.1, durationMs: DELAY_MS } };
+    });
+
+    mockOneParallelRound(PARALLEL_CALLS);
+
+    const wallStart = Date.now();
+    await executeAgentTurn(payload, fakeCtx("trigger_parallel_1"));
+    const wallElapsed = Date.now() - wallStart;
+
+    // ONE round-level waitpoint listing all three calls — not three.
+    const waitpoints = await testDb.waitpoint.findMany({ where: { agentRunId: run.id } });
+    expect(waitpoints).toHaveLength(1);
+    expect((waitpoints[0].requestPayload as { calls: unknown[] }).calls).toHaveLength(3);
+
+    // Genuine batching: one batchTriggerAndWait call carrying all three
+    // items — not three separate one-item calls (the old bug's signature).
+    expect(batchTriggerAndWait).toHaveBeenCalledTimes(1);
+    expect(batchTriggerAndWait.mock.calls[0][0]).toHaveLength(3);
+
+    // Real-time proof, not just a call-shape assertion: three genuinely
+    // sequential DELAY_MS dispatches would take >= 3*DELAY_MS wall time.
+    // Generous bound to absorb CI/scheduler jitter without being able to
+    // pass under the old serialized behavior.
+    expect(wallElapsed).toBeLessThan(DELAY_MS * 2.5);
+    const overlaps = intervals.some((a, i) => intervals.some((b, j) => i !== j && a.start < b.end && b.start < a.end));
+    expect(overlaps).toBe(true);
+
+    const invocations = await testDb.toolInvocation.findMany({ where: { agentRunId: run.id } });
+    expect(invocations).toHaveLength(3);
+    expect(invocations.every((inv) => inv.status === "COMPLETED")).toBe(true);
+  });
+
+  it("a declined round fails every over-threshold call with zero reservations and zero dispatches", async () => {
+    const userId = "user_tool_parallel_2";
+    const chat = await createChatAs(userId);
+    const { run, message } = await sendAs(userId, chat.id);
+    const dbUser = await testDb.user.findUniqueOrThrow({ where: { clerkUserId: userId } });
+    const payload = { runId: run.id, chatId: chat.id, userMessageId: message.id, userId: dbUser.id, requestedModel: run.requestedModel };
+
+    wait.forToken = vi.fn(async (id: string) => {
+      await testDb.waitpoint.updateMany({
+        where: { triggerTokenId: id, status: "PENDING" },
+        data: { status: "COMPLETED", resolvedPayload: { approved: false, respondedAt: new Date().toISOString() }, resolvedAt: new Date() },
+      });
+      return { ok: true, output: {} };
+    });
+
+    mockOneParallelRound(PARALLEL_CALLS);
+    await executeAgentTurn(payload, fakeCtx("trigger_parallel_2"));
+
+    // Declined before ToolInvocation row creation — nothing was ever
+    // created or dispatched for any of the three calls.
+    expect(await testDb.toolInvocation.count({ where: { agentRunId: run.id } })).toBe(0);
+    expect(triggerAndWait).not.toHaveBeenCalled();
+    expect(batchTriggerAndWait).not.toHaveBeenCalled();
+    const additionalReserves = await testDb.creditLedger.findMany({
+      where: { runId: run.id, kind: "RESERVE", toolInvocationId: { not: null } },
+    });
+    expect(additionalReserves).toHaveLength(0);
+
+    const waitpoints = await testDb.waitpoint.findMany({ where: { agentRunId: run.id } });
+    expect(waitpoints).toHaveLength(1);
+
+    const finalRun = await testDb.agentRun.findUniqueOrThrow({ where: { id: run.id } });
+    const assistantMessage = await testDb.message.findUniqueOrThrow({ where: { id: finalRun.assistantMessageId! } });
+    const blocks = assistantMessage.content as Array<{ type: string; status?: string; errorMessage?: string }>;
+    const toolResults = blocks.filter((b) => b.type === "tool_result");
+    expect(toolResults).toHaveLength(3);
+    expect(toolResults.every((b) => b.status === "FAILED" && b.errorMessage === "The user did not approve this action.")).toBe(true);
+  });
+
+  it("a mixed round only gates the over-threshold call — the below-threshold call dispatches in the same batch without approval", async () => {
+    const userId = "user_tool_parallel_3";
+    const chat = await createChatAs(userId);
+    const { run, message } = await sendAs(userId, chat.id);
+    const dbUser = await testDb.user.findUniqueOrThrow({ where: { clerkUserId: userId } });
+    const videoUrl = "https://example.com/clip.mp4";
+    await registerOwnedAsset(dbUser.id, chat.id, videoUrl);
+    const payload = { runId: run.id, chatId: chat.id, userMessageId: message.id, userId: dbUser.id, requestedModel: run.requestedModel };
+
+    // generate_image (0.1) is over APPROVAL_CREDIT_THRESHOLD (0.08);
+    // merge_videos (0.05) is under it.
+    const GEN_CALL: ResolvedToolCall = { id: "call_gen", name: "generate_image", args: { prompt: "a cat" } };
+    const MERGE_CALL: ResolvedToolCall = { id: "call_merge", name: "merge_videos", args: { video_urls: [videoUrl, videoUrl] } };
+
+    triggerAndWait.mockImplementation(async ({ toolInvocationId }: { toolInvocationId: string }) => {
+      await testDb.toolInvocation.update({
+        where: { id: toolInvocationId },
+        data: { status: "COMPLETED", resultUrls: ["https://out.example.com/x"], finishedAt: new Date() },
+      });
+      return { ok: true, output: { status: "COMPLETED", resultUrls: ["https://out.example.com/x"], creditUsedApp: 0.05, durationMs: 10 } };
+    });
+
+    mockOneParallelRound([GEN_CALL, MERGE_CALL]);
+    await executeAgentTurn(payload, fakeCtx("trigger_parallel_3"));
+
+    const waitpoints = await testDb.waitpoint.findMany({ where: { agentRunId: run.id } });
+    expect(waitpoints).toHaveLength(1);
+    const calls = (waitpoints[0].requestPayload as { calls: { toolName: string }[] }).calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0].toolName).toBe("generate_image");
+
+    // Both calls still land in the SAME batchTriggerAndWait dispatch — the
+    // below-threshold call was never gated, but it's still reserved/queued
+    // in the same round-admission pass as the (now-approved) over-threshold
+    // one, so both flush together.
+    expect(batchTriggerAndWait).toHaveBeenCalledTimes(1);
+    expect(batchTriggerAndWait.mock.calls[0][0]).toHaveLength(2);
+
+    const invocations = await testDb.toolInvocation.findMany({ where: { agentRunId: run.id } });
+    expect(invocations).toHaveLength(2);
+    expect(invocations.every((inv) => inv.status === "COMPLETED")).toBe(true);
+  });
+
+  it("persists tool_use/tool_result blocks in model-emitted order even when the LAST call finishes FIRST (completion-race order must never leak into persisted content)", async () => {
+    const userId = "user_tool_parallel_4";
+    const chat = await createChatAs(userId);
+    const { run, message } = await sendAs(userId, chat.id);
+    const dbUser = await testDb.user.findUniqueOrThrow({ where: { clerkUserId: userId } });
+    const payload = { runId: run.id, chatId: chat.id, userMessageId: message.id, userId: dbUser.id, requestedModel: run.requestedModel };
+
+    // Inverse delay order: call index 2 (last, callIndex 2) resolves
+    // fastest; call index 0 (first) resolves slowest.
+    const delaysByCallOrder = [90, 45, 5];
+    let seen = 0;
+    triggerAndWait.mockImplementation(async ({ toolInvocationId }: { toolInvocationId: string }) => {
+      const delay = delaysByCallOrder[seen++];
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      await testDb.toolInvocation.update({
+        where: { id: toolInvocationId },
+        data: { status: "COMPLETED", resultUrls: [`https://out.example.com/${toolInvocationId}.png`], creditUsed: 0.1, finishedAt: new Date() },
+      });
+      return {
+        ok: true,
+        output: { status: "COMPLETED", resultUrls: [`https://out.example.com/${toolInvocationId}.png`], creditUsedApp: 0.1, durationMs: delay },
+      };
+    });
+
+    mockOneParallelRound(PARALLEL_CALLS);
+    await executeAgentTurn(payload, fakeCtx("trigger_parallel_4"));
+
+    const invocations = await testDb.toolInvocation.findMany({ where: { agentRunId: run.id }, orderBy: { callIndex: "asc" } });
+    expect(invocations.map((i) => i.callIndex)).toEqual([0, 1, 2]);
+
+    const finalRun = await testDb.agentRun.findUniqueOrThrow({ where: { id: run.id } });
+    const assistantMessage = await testDb.message.findUniqueOrThrow({ where: { id: finalRun.assistantMessageId! } });
+    const blocks = assistantMessage.content as Array<{ type: string; toolUseId?: string; toolInvocationId?: string; id?: string }>;
+    const toolUseIds = blocks.filter((b) => b.type === "tool_use").map((b) => b.id);
+    const toolResultInvocationIds = blocks.filter((b) => b.type === "tool_result").map((b) => b.toolInvocationId);
+    // tool_use blocks are written serially during admission (unaffected by
+    // dispatch concurrency) — always in call order.
+    expect(toolUseIds).toEqual(["call_a", "call_b", "call_c"]);
+    // tool_result blocks are the ones at risk of completion-race reordering
+    // — must still land in original call order despite call_c finishing
+    // its dispatch first.
+    expect(toolResultInvocationIds).toEqual(invocations.map((i) => i.id));
+  });
+
+  it("repeated transition: two rounds of parallel tools in the same turn — no leaked pending/hold state between rounds, monotonic stream indices", async () => {
+    const userId = "user_tool_parallel_5";
+    const chat = await createChatAs(userId);
+    const { run, message } = await sendAs(userId, chat.id);
+    const dbUser = await testDb.user.findUniqueOrThrow({ where: { clerkUserId: userId } });
+    const payload = { runId: run.id, chatId: chat.id, userMessageId: message.id, userId: dbUser.id, requestedModel: run.requestedModel };
+
+    const ROUND_1: ResolvedToolCall[] = [
+      { id: "r1_a", name: "generate_image", args: { prompt: "round 1 a" } },
+      { id: "r1_b", name: "generate_image", args: { prompt: "round 1 b" } },
+    ];
+    const ROUND_2: ResolvedToolCall[] = [
+      { id: "r2_a", name: "generate_image", args: { prompt: "round 2 a" } },
+      { id: "r2_b", name: "generate_image", args: { prompt: "round 2 b" } },
+    ];
+
+    triggerAndWait.mockImplementation(async ({ toolInvocationId }: { toolInvocationId: string }) => {
+      await testDb.toolInvocation.update({
+        where: { id: toolInvocationId },
+        data: { status: "COMPLETED", resultUrls: ["https://out.example.com/x.png"], creditUsed: 0.1, finishedAt: new Date() },
+      });
+      return { ok: true, output: { status: "COMPLETED", resultUrls: ["https://out.example.com/x.png"], creditUsedApp: 0.1, durationMs: 5 } };
+    });
+
+    runAgentLoop.mockImplementationOnce(async (params: RunAgentLoopParams) => {
+      const round1 = (await params.onToolCalls?.(ROUND_1, 0)) ?? [];
+      const round2 = (await params.onToolCalls?.(ROUND_2, 1)) ?? [];
+      await params.onDelta({ index: 0, delta: "done." });
+      return {
+        outcome: "completed" as const,
+        text: "done.",
+        chunkCount: 1,
+        finishReason: "stop",
+        resolvedModel: "upstage/solar-pro-3:free",
+        usage: { promptTokens: 10, completionTokens: 2, costCredits: 0 },
+        toolResultsForAssertion: [...round1, ...round2],
+      };
+    });
+
+    await executeAgentTurn(payload, fakeCtx("trigger_parallel_5"));
+
+    // generate_image was already decided (approved) in round 1's waitpoint
+    // — round 2 never re-asks (the consent memo — see
+    // integration/waitpoints.test.ts for the dedicated consent-memo
+    // coverage), so only ONE waitpoint exists for the whole run.
+    const waitpoints = await testDb.waitpoint.findMany({ where: { agentRunId: run.id } });
+    expect(waitpoints).toHaveLength(1);
+
+    // Each round flushed its own batch independently — two
+    // batchTriggerAndWait calls of two items each, never merged into one
+    // call of four (proving `pending` was empty at the start of round 2,
+    // not carrying round 1's items forward) and never split unexpectedly.
+    expect(batchTriggerAndWait).toHaveBeenCalledTimes(2);
+    expect(batchTriggerAndWait.mock.calls[0][0]).toHaveLength(2);
+    expect(batchTriggerAndWait.mock.calls[1][0]).toHaveLength(2);
+
+    const invocations = await testDb.toolInvocation.findMany({ where: { agentRunId: run.id }, orderBy: [{ turnIndex: "asc" }, { callIndex: "asc" }] });
+    expect(invocations).toHaveLength(4);
+    expect(invocations.map((i) => i.turnIndex)).toEqual([0, 0, 1, 1]);
+    expect(invocations.every((inv) => inv.status === "COMPLETED")).toBe(true);
+
+    // No leaked/duplicated CreditHold — one hold for the whole run,
+    // capturing all four dispatches' worth of credit.
+    const hold = await testDb.creditHold.findUniqueOrThrow({ where: { runId: run.id } });
+    expect(hold.status).toBe("CAPTURED");
+    expect(Number(hold.capturedAmount)).toBeCloseTo(0.4, 6);
+
+    // Stream indices are strictly increasing across both rounds — no
+    // duplicate or reused index, and round 2 continues where round 1 left
+    // off rather than restarting.
+    const writtenIndices = streamWrite.mock.calls.map(([part]) => (part as { index: number }).index);
+    for (let i = 1; i < writtenIndices.length; i++) {
+      expect(writtenIndices[i]).toBeGreaterThan(writtenIndices[i - 1]);
+    }
+  });
+
+  it("caps concurrent dispatch at MAX_PARALLEL_TOOL_DISPATCH — a 12-call round chunks into batches of at most 5", async () => {
+    const userId = "user_tool_parallel_6";
+    const chat = await createChatAs(userId);
+    const { run, message } = await sendAs(userId, chat.id);
+    const dbUser = await testDb.user.findUniqueOrThrow({ where: { clerkUserId: userId } });
+    const payload = { runId: run.id, chatId: chat.id, userMessageId: message.id, userId: dbUser.id, requestedModel: run.requestedModel };
+
+    const TWELVE_CALLS: ResolvedToolCall[] = Array.from({ length: 12 }, (_, i) => ({
+      id: `call_${i}`,
+      name: "generate_image",
+      args: { prompt: `prompt ${i}` },
+    }));
+
+    let concurrent = 0;
+    let maxConcurrent = 0;
+    triggerAndWait.mockImplementation(async ({ toolInvocationId }: { toolInvocationId: string }) => {
+      concurrent++;
+      maxConcurrent = Math.max(maxConcurrent, concurrent);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      concurrent--;
+      await testDb.toolInvocation.update({
+        where: { id: toolInvocationId },
+        data: { status: "COMPLETED", resultUrls: ["https://out.example.com/x.png"], creditUsed: 0.1, finishedAt: new Date() },
+      });
+      return { ok: true, output: { status: "COMPLETED", resultUrls: ["https://out.example.com/x.png"], creditUsedApp: 0.1, durationMs: 20 } };
+    });
+
+    mockOneParallelRound(TWELVE_CALLS);
+    await executeAgentTurn(payload, fakeCtx("trigger_parallel_6"));
+
+    // MAX_PARALLEL_TOOL_DISPATCH is 5 — 12 calls chunk into 5 + 5 + 2,
+    // three separate batchTriggerAndWait calls, never all 12 in one call
+    // and never more than 5 truly concurrent at any instant.
+    expect(batchTriggerAndWait).toHaveBeenCalledTimes(3);
+    expect(batchTriggerAndWait.mock.calls.map((call) => (call[0] as unknown[]).length)).toEqual([5, 5, 2]);
+    expect(maxConcurrent).toBeLessThanOrEqual(5);
+
+    const invocations = await testDb.toolInvocation.findMany({ where: { agentRunId: run.id } });
+    expect(invocations).toHaveLength(12);
+    expect(invocations.every((inv) => inv.status === "COMPLETED")).toBe(true);
   });
 });

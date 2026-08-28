@@ -13,9 +13,13 @@ export function waitpointInstruction(outcome: WaitOutcome): string | undefined {
   const wp = outcome.pendingWaitpoint;
   if (!wp) return undefined;
   if (wp.kind === "CREDIT_APPROVAL") {
-    const { toolName, estimatedCredits } = wp.requestPayload;
+    const { calls, estimatedCredits, threshold } = wp.requestPayload;
+    const summary =
+      calls.length === 1
+        ? `${calls[0].toolName} (${calls[0].estimatedCredits} credits)`
+        : calls.map((c) => `${c.toolName} (${c.estimatedCredits} credits)`).join(", ");
     return (
-      `Approval required for ${toolName} (${estimatedCredits} credits). Call ` +
+      `Approval required for ${summary} — total ${estimatedCredits} credits, threshold ${threshold}. Call ` +
       `vyomflow_respond_waitpoint({ waitpointId: '${wp.id}', kind: 'CREDIT_APPROVAL', approved: true|false }) ` +
       `before ${wp.expiresAt}.`
     );

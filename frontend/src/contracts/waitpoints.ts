@@ -1,4 +1,4 @@
-// GENERATED — do not edit. Source: 1173916808585c5b39a4dfd2d96256d6ec489be5:src/contracts/waitpoints.ts
+// GENERATED — do not edit. Source: c9a2eb298ce02df0d3dd251bf7973b1da3131683:src/contracts/waitpoints.ts
 /**
  * S6 — Waitpoint contracts (.claude/specs/S6-reliability-implementation-plan.md
  * §6.2/§6.2a/§7.1). Pure Zod only, same rules as every other file under
@@ -9,6 +9,8 @@
  * different request/resolved payloads — both schemas below are
  * kind-discriminated unions so the wire contract itself enforces the right
  * shape per kind, rather than trusting a caller to send the correct fields.
+ * A CREDIT_APPROVAL request payload may cover multiple calls in one round
+ * (approval is all-or-nothing per round).
  */
 import { z } from "zod";
 
@@ -18,9 +20,16 @@ export type WaitpointKind = z.infer<typeof WaitpointKindSchema>;
 export const WaitpointStatusSchema = z.enum(["PENDING", "COMPLETED", "EXPIRED"]);
 export type WaitpointStatus = z.infer<typeof WaitpointStatusSchema>;
 
-export const CreditApprovalRequestPayloadSchema = z.object({
+export const CreditApprovalCallSchema = z.object({
+  toolCallId: z.string(),
   toolName: z.string(),
   estimatedCredits: z.number().nonnegative(),
+});
+export type CreditApprovalCall = z.infer<typeof CreditApprovalCallSchema>;
+
+export const CreditApprovalRequestPayloadSchema = z.object({
+  calls: z.array(CreditApprovalCallSchema).min(1),
+  estimatedCredits: z.number().nonnegative(), // round total across `calls`
   threshold: z.number().nonnegative(),
 });
 export const ClarificationRequestPayloadSchema = z.object({

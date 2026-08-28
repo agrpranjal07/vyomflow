@@ -8,6 +8,8 @@
  * different request/resolved payloads — both schemas below are
  * kind-discriminated unions so the wire contract itself enforces the right
  * shape per kind, rather than trusting a caller to send the correct fields.
+ * A CREDIT_APPROVAL request payload may cover multiple calls in one round
+ * (approval is all-or-nothing per round).
  */
 import { z } from "zod";
 
@@ -17,9 +19,16 @@ export type WaitpointKind = z.infer<typeof WaitpointKindSchema>;
 export const WaitpointStatusSchema = z.enum(["PENDING", "COMPLETED", "EXPIRED"]);
 export type WaitpointStatus = z.infer<typeof WaitpointStatusSchema>;
 
-export const CreditApprovalRequestPayloadSchema = z.object({
+export const CreditApprovalCallSchema = z.object({
+  toolCallId: z.string(),
   toolName: z.string(),
   estimatedCredits: z.number().nonnegative(),
+});
+export type CreditApprovalCall = z.infer<typeof CreditApprovalCallSchema>;
+
+export const CreditApprovalRequestPayloadSchema = z.object({
+  calls: z.array(CreditApprovalCallSchema).min(1),
+  estimatedCredits: z.number().nonnegative(), // round total across `calls`
   threshold: z.number().nonnegative(),
 });
 export const ClarificationRequestPayloadSchema = z.object({

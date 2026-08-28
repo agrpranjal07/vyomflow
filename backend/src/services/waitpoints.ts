@@ -42,7 +42,7 @@ export function toWaitpointDTO(row: Waitpoint): WaitpointDTO {
     return {
       ...base,
       kind: "CREDIT_APPROVAL",
-      requestPayload: row.requestPayload as { toolName: string; estimatedCredits: number; threshold: number },
+      requestPayload: row.requestPayload as { calls: { toolCallId: string; toolName: string; estimatedCredits: number }[]; estimatedCredits: number; threshold: number },
       resolvedPayload: row.resolvedPayload as { approved: boolean; respondedAt: string } | null,
     };
   }
@@ -72,14 +72,20 @@ export async function createWaitpoint(
 ): Promise<{ id: string }> {
   const { runId, kind, requestPayload, triggerTokenId, expiresAt } = params;
 
-  const created = await tx.waitpoint.create({
-    data: {
+  // A retried Trigger.dev task step reuses the same idempotency-keyed
+  // token id; `triggerTokenId` is `@unique` in schema.prisma, so a bare
+  // `create` would throw P2002 on the retry — upsert makes the retry a
+  // safe no-op returning the existing row instead.
+  const created = await tx.waitpoint.upsert({
+    where: { triggerTokenId },
+    create: {
       agentRunId: runId,
       kind,
       requestPayload: requestPayload as Prisma.InputJsonValue,
       triggerTokenId,
       expiresAt,
     },
+    update: {},
   });
 
   await tx.agentRun.updateMany({

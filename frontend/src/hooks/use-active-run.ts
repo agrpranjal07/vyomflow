@@ -175,6 +175,14 @@ export function useActiveRun(chatId: string, seedActiveRunId: string | null | un
   // Waitpoint ids the human has already responded to this run — see the
   // stream-derived effect below for why this exists.
   const resolvedWaitpointIds = useRef<Set<string>>(new Set());
+  // Single gate for every REST/stream-derived waitpoint snapshot: a stale
+  // snapshot for an id the human already responded to (a genuine race — the
+  // REST/stream delivery can be in flight before `respond()`'s write commits
+  // and land after) must never reopen the overlay.
+  const applyWaitpoint = useCallback((wp: WaitpointDTO | null) => {
+    if (wp && resolvedWaitpointIds.current.has(wp.id)) return;
+    setPendingWaitpoint(wp);
+  }, []);
 
   const mergeToolInvocations = useCallback((invocations: ToolInvocationDTO[]) => {
     if (invocations.length === 0) return;
@@ -224,14 +232,15 @@ export function useActiveRun(chatId: string, seedActiveRunId: string | null | un
     lastActivityAt.current = Date.now();
     handledErrors.current = { stream: undefined, run: undefined };
     invalidatedCreditToolIds.current = new Set();
+    resolvedWaitpointIds.current = new Set();
     setRestToolOverlay(new Map());
     setConnectionLost(false);
     setIsReconnecting(false);
     setLastRunError(null);
-    setPendingWaitpoint(newRun.pendingWaitpoint);
+    applyWaitpoint(newRun.pendingWaitpoint);
     setRun(newRun);
     setRealtime(newRealtime);
-  }, []);
+  }, [applyWaitpoint]);
 
   const forceResubscribe = useCallback(() => {
     lastActivityAt.current = Date.now();
@@ -268,6 +277,7 @@ export function useActiveRun(chatId: string, seedActiveRunId: string | null | un
     });
     reconnectAttempts.current = 0;
     handledErrors.current = { stream: undefined, run: undefined };
+    resolvedWaitpointIds.current = new Set();
     // finalizedRunId is deliberately left alone — it's only ever compared
     // against a fresh run's id (unique per run), so a stale value from the
     // previous chat can never falsely match and suppress a real finalize().
@@ -294,7 +304,7 @@ export function useActiveRun(chatId: string, seedActiveRunId: string | null | un
           handledErrors.current = { stream: undefined, run: undefined };
           setRun(freshRun);
           setRealtime(freshToken);
-          setPendingWaitpoint(freshRun.pendingWaitpoint);
+          applyWaitpoint(freshRun.pendingWaitpoint);
         }
       } catch {
         // Best-effort hydration — the chat's own message list is still the
@@ -304,7 +314,7 @@ export function useActiveRun(chatId: string, seedActiveRunId: string | null | un
     return () => {
       cancelled = true;
     };
-  }, [seedActiveRunId, run, fetcher, mergeToolInvocations]);
+  }, [seedActiveRunId, run, fetcher, mergeToolInvocations, applyWaitpoint]);
 
   // Token refresh, scheduled ahead of expiry.
   useEffect(() => {
@@ -516,7 +526,7 @@ export function useActiveRun(chatId: string, seedActiveRunId: string | null | un
           }
           setConnectionLost(false);
           setRun(fresh);
-          setPendingWaitpoint(fresh.pendingWaitpoint);
+          applyWaitpoint(fresh.pendingWaitpoint);
         } catch {
           // REST itself failed — still worth forcing a resubscribe below;
           // the next tick reassesses and retries either path.
@@ -551,7 +561,7 @@ export function useActiveRun(chatId: string, seedActiveRunId: string | null | un
     // reconcile inside this same effect, which previously collapsed
     // in-flight backoff waits (see the effect's own comment above).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, run?.id, fetcher, finalize, forceResubscribe, mergeToolInvocations]);
+  }, [enabled, run?.id, fetcher, finalize, forceResubscribe, mergeToolInvocations, applyWaitpoint]);
 
   // S6 §7.8/Task D — a realtime "waitpoint" stream part updates local state
   // the instant it arrives, so ApprovalOverlay doesn't wait on a REST round
@@ -571,12 +581,11 @@ export function useActiveRun(chatId: string, seedActiveRunId: string | null | un
   // records the id there the moment it optimistically clears local state.
   useEffect(() => {
     const wp = latestWaitpointFromStream(stream.parts);
-    if (wp && resolvedWaitpointIds.current.has(wp.id)) return;
     // Deferred a tick (react-hooks/set-state-in-effect) — same reasoning as
     // forceResubscribe's setTimeout above: a setState call synchronous
     // within the effect body itself is flagged even when harmless here.
-    if (wp) queueMicrotask(() => setPendingWaitpoint(wp.status === "PENDING" ? wp : null));
-  }, [stream.parts]);
+    if (wp) queueMicrotask(() => applyWaitpoint(wp.status === "PENDING" ? wp : null));
+  }, [stream.parts, applyWaitpoint]);
 
   const streamedText = accumulateStreamedText(stream.parts);
   // Merged with the REST-reconciliation overlay (F3): a server-confirmed
@@ -616,9 +625,9 @@ export function useActiveRun(chatId: string, seedActiveRunId: string | null | un
       finalize(updated);
     } else {
       setRun(updated);
-      setPendingWaitpoint(updated.pendingWaitpoint);
+      applyWaitpoint(updated.pendingWaitpoint);
     }
-  }, [run, fetcher, finalize]);
+  }, [run, fetcher, finalize, applyWaitpoint]);
 
   // S6 §7.8 — POSTs the human's response to a pending waitpoint (approval or
   // clarification) and optimistically clears it locally so ApprovalOverlay
@@ -626,9 +635,15 @@ export function useActiveRun(chatId: string, seedActiveRunId: string | null | un
   // picked up via realtime/REST reconcile like any other status change.
   const respond = useCallback(
     async (waitpointId: string, body: RespondToWaitpointRequest) => {
+      // The user clicking is itself the signal that this id must never
+      // re-prompt — recorded before the POST even goes out, not after it
+      // resolves, so a stale REST/stream snapshot landing mid-flight (or a
+      // failed request the user retries) can't reopen the overlay. The
+      // overlay's own error/retry UI is the correct retry affordance, not a
+      // reopened waitpoint.
+      resolvedWaitpointIds.current.add(waitpointId);
       const updated = await waitpointsService.respondToWaitpoint(fetcher, waitpointId, body);
       if (updated.status !== "PENDING") {
-        resolvedWaitpointIds.current.add(waitpointId);
         setPendingWaitpoint(null);
       }
       return updated;

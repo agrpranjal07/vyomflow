@@ -11,7 +11,14 @@ function creditApprovalWaitpoint(overrides: Partial<WaitpointDTO> = {}): Waitpoi
     agentRunId: "run1",
     kind: "CREDIT_APPROVAL",
     status: "PENDING",
-    requestPayload: { toolName: "gpt_image_2", estimatedCredits: 0.1, threshold: 0.08 },
+    // 2026-08-29: round-level payload — a CREDIT_APPROVAL waitpoint may
+    // gate more than one call in the same round; approval stays
+    // all-or-nothing (resolvedPayload is still just { approved, respondedAt }).
+    requestPayload: {
+      calls: [{ toolCallId: "call_1", toolName: "gpt_image_2", estimatedCredits: 0.1 }],
+      estimatedCredits: 0.1,
+      threshold: 0.08,
+    },
     resolvedPayload: null,
     expiresAt: "2026-08-21T21:00:00.000Z",
     resolvedAt: null,
@@ -49,9 +56,39 @@ describe("ApprovalOverlay — S6 waitpoint visibility in the UI", () => {
   it("makes a CREDIT_APPROVAL waitpoint visible with the tool name, estimate, and threshold", () => {
     render(<ApprovalOverlay waitpoint={creditApprovalWaitpoint()} onRespond={vi.fn()} />);
     expect(screen.getByRole("group", { name: "Credit approval requested" })).toBeInTheDocument();
-    expect(screen.getByText(/gpt_image_2/)).toBeInTheDocument();
-    expect(screen.getByText(/0\.1M credits/)).toBeInTheDocument();
+    expect(screen.getByText(/gpt_image_2 — ~0\.1M credits/)).toBeInTheDocument();
+    expect(screen.getByText(/will use ~0\.1M credits/)).toBeInTheDocument();
     expect(screen.getByText(/threshold 0\.08M/)).toBeInTheDocument();
+  });
+
+  it("lists every call in a multi-call round and shows the round total, not just the first call", () => {
+    render(
+      <ApprovalOverlay
+        waitpoint={creditApprovalWaitpoint({
+          requestPayload: {
+            calls: [
+              { toolCallId: "call_1", toolName: "generate_image", estimatedCredits: 0.1 },
+              { toolCallId: "call_2", toolName: "generate_image", estimatedCredits: 0.1 },
+              { toolCallId: "call_3", toolName: "generate_image", estimatedCredits: 0.1 },
+            ],
+            estimatedCredits: 0.3,
+            threshold: 0.08,
+          },
+        })}
+        onRespond={vi.fn()}
+      />,
+    );
+    // Round total, not any single call's estimate.
+    expect(screen.getByText(/0\.3M credits/)).toBeInTheDocument();
+    // Every call renders, not just the first — this is the whole point of
+    // hoisting approval to one round-level waitpoint (2026-08-29 fix): three
+    // over-threshold calls in one round must produce ONE prompt listing all
+    // three, not three separate prompts.
+    expect(screen.getAllByText(/generate_image — ~0\.1M credits/)).toHaveLength(3);
+    // Still a single Decline/Approve pair — all-or-nothing per round, not
+    // per-call granularity.
+    expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Decline" })).toHaveLength(1);
   });
 
   it("Approve sends {kind: CREDIT_APPROVAL, approved: true} for the pending waitpoint's id", async () => {
@@ -148,5 +185,24 @@ describe("ApprovalOverlay — S6 waitpoint visibility in the UI", () => {
     const input = screen.getByLabelText("Answer") as HTMLInputElement;
     expect(input.value).toBe("");
     expect(input).not.toBeDisabled();
+  });
+
+  it("boundary — re-passing the SAME still-PENDING waitpoint after it was already answered renders it fully interactive again (this component has no memory of its own; suppressing a stale re-appearance of the same id is the caller's job — see use-active-run.test.tsx's resolvedWaitpointIds coverage)", async () => {
+    const onRespond = vi.fn().mockResolvedValue({ status: "COMPLETED" });
+    const user = userEvent.setup();
+    const wp = creditApprovalWaitpoint();
+    const { rerender } = render(<ApprovalOverlay key={wp.id} waitpoint={wp} onRespond={onRespond} />);
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    expect(onRespond).toHaveBeenCalledTimes(1);
+
+    // Same id, still PENDING (a caller that failed to filter this out —
+    // exactly the stale-REST-snapshot race use-active-run.ts's
+    // `applyWaitpoint`/`resolvedWaitpointIds` guard exists to prevent).
+    // ApprovalOverlay itself does not — and must not — remember that this
+    // id was already answered; it renders whatever PENDING waitpoint it's
+    // handed. This is a boundary test, not a bug report: it documents that
+    // the suppression responsibility lives entirely upstream.
+    rerender(<ApprovalOverlay key={wp.id} waitpoint={wp} onRespond={onRespond} />);
+    expect(screen.getByRole("button", { name: "Approve" })).not.toBeDisabled();
   });
 });

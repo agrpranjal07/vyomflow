@@ -1,4 +1,4 @@
-// GENERATED — do not edit. Source: 1173916808585c5b39a4dfd2d96256d6ec489be5:src/contracts/attachments.ts
+// GENERATED — do not edit. Source: c9a2eb298ce02df0d3dd251bf7973b1da3131683:src/contracts/attachments.ts
 /**
  * S4 — Attachments (direct upload via Transloadit/Uppy/tus). Pure Zod only,
  * same rule as every other file under src/contracts/** (00-master-spec.md
