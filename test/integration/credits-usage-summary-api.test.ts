@@ -65,8 +65,10 @@ describe("GET /api/v1/me/credits/usage-summary", () => {
     expect(Number(cropGroup.totalDebited)).toBeCloseTo(4, 6);
     expect(cropGroup.records).toBe(1);
 
+    // Bare-LLM bucket is now labeled "AI Reasoning" — "VyomFlow" moved to
+    // the cross-tool aggregate group (2026-08-29 UX fix regression test).
     const llmGroup = body.groups.find((g: { toolKey: string }) => g.toolKey === "none");
-    expect(llmGroup.displayName).toBe("VyomFlow");
+    expect(llmGroup.displayName).toBe("AI Reasoning");
     expect(Number(llmGroup.totalDebited)).toBeCloseTo(0, 6);
     expect(llmGroup.records).toBe(1);
 
@@ -74,6 +76,8 @@ describe("GET /api/v1/me/credits/usage-summary", () => {
     // RESERVE(1+4) or RELEASE(1) folded in, which would double-count.
     expect(Number(body.totalDebitedAll)).toBeCloseTo(4, 6);
     expect(body.recordsAll).toBe(2);
+    // categoriesCount reflects only real tool categories (crop_image, none)
+    // — the synthetic aggregate group is not one more category.
     expect(body.categoriesCount).toBe(2);
     expect(body.periodStart).not.toBeNull();
     expect(body.periodEnd).not.toBeNull();
@@ -124,7 +128,10 @@ describe("GET /api/v1/me/credits/usage-summary", () => {
 
     const res = await getUsageSummary(authedRequest(BASE, "user_summary_2"));
     const body = await res.json();
-    const names = body.groups.map((g: { displayName: string }) => g.displayName).sort();
+    const names = body.groups
+      .filter((g: { toolKey: string }) => g.toolKey !== "__all__")
+      .map((g: { displayName: string }) => g.displayName)
+      .sort();
     expect(names).toEqual(["AI Generate Image", "AI Merge Videos"].sort());
   });
 
@@ -132,7 +139,11 @@ describe("GET /api/v1/me/credits/usage-summary", () => {
     const user = await makeUser("user_summary_empty", 100);
     const res = await getUsageSummary(authedRequest(BASE, "user_summary_empty"));
     const body = await res.json();
-    expect(body.groups).toEqual([]);
+    // The synthetic aggregate group is still present (always groups[0]),
+    // honestly reporting zero — only the real per-tool groups are absent.
+    expect(body.groups).toEqual([
+      { toolKey: "__all__", displayName: "VyomFlow", totalDebited: "0.0000", records: 0, latestUsageAt: null },
+    ]);
     expect(body.totalDebitedAll).toBe("0.0000");
     expect(body.recordsAll).toBe(0);
     expect(body.categoriesCount).toBe(0);
@@ -162,10 +173,121 @@ describe("GET /api/v1/me/credits/usage-summary", () => {
     expect(Number(body.totalDebitedAll)).toBeCloseTo(5, 6);
   });
 
+  it("?period= filters by createdAt cutoff; omitted/'all' keeps the full unfiltered history", async () => {
+    // The /usage page's period filter (2026-08-29). Two CAPTUREs for the
+    // same user — one at "now", one backdated 40 days, so it falls outside
+    // a 30d window but inside 90d/all.
+    const user = await makeUser("user_summary_period", 100);
+
+    const oldRun = await makeChatAndRun(user.id, 1);
+    const oldTool = await makeToolInvocation(oldRun.id, "call_old", "crop_image");
+    await prisma.$transaction((tx) => reserveHold(tx, { runId: oldRun.id, userId: user.id, amount: 6 }));
+    await prisma.$transaction((tx) =>
+      captureForTool(tx, { runId: oldRun.id, userId: user.id, toolInvocationId: oldTool.id, amount: 6 }),
+    );
+    // captureForTool stamps createdAt via the Prisma default ("now") — the
+    // only way to place a row in the past is to backdate it directly.
+    await testDb.creditLedger.updateMany({
+      where: { runId: oldRun.id, kind: "CAPTURE" },
+      data: { createdAt: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000) },
+    });
+
+    const recentRun = await makeChatAndRun(user.id, 2);
+    const recentTool = await makeToolInvocation(recentRun.id, "call_recent", "crop_image");
+    await prisma.$transaction((tx) => reserveHold(tx, { runId: recentRun.id, userId: user.id, amount: 4 }));
+    await prisma.$transaction((tx) =>
+      captureForTool(tx, { runId: recentRun.id, userId: user.id, toolInvocationId: recentTool.id, amount: 4 }),
+    );
+
+    const filtered = await (await getUsageSummary(authedRequest(`${BASE}?period=30d`, "user_summary_period"))).json();
+    expect(Number(filtered.totalDebitedAll)).toBeCloseTo(4, 6);
+    expect(filtered.recordsAll).toBe(1);
+    const filteredCrop = filtered.groups.find((g: { toolKey: string }) => g.toolKey === "crop_image");
+    expect(Number(filteredCrop.totalDebited)).toBeCloseTo(4, 6);
+    expect(filteredCrop.records).toBe(1);
+    expect(new Date(filtered.periodStart).getTime()).toBeGreaterThan(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    // A wider window and the explicit "all" both include the backdated row.
+    const ninety = await (await getUsageSummary(authedRequest(`${BASE}?period=90d`, "user_summary_period"))).json();
+    expect(Number(ninety.totalDebitedAll)).toBeCloseTo(10, 6);
+
+    const all = await (await getUsageSummary(authedRequest(`${BASE}?period=all`, "user_summary_period"))).json();
+    expect(Number(all.totalDebitedAll)).toBeCloseTo(10, 6);
+    expect(all.recordsAll).toBe(2);
+
+    // Omitted ?period= must behave exactly like "all" — the pre-filter
+    // behavior is unchanged for existing callers.
+    const omitted = await (await getUsageSummary(authedRequest(BASE, "user_summary_period"))).json();
+    expect(omitted).toEqual(all);
+  });
+
+  it("an unknown ?period= value is rejected as a bad request", async () => {
+    await makeUser("user_summary_period_bad", 100);
+    const res = await getUsageSummary(authedRequest(`${BASE}?period=nonsense`, "user_summary_period_bad"));
+    expect(res.status).toBe(400);
+  });
+
   it("unauthenticated read is rejected with a non-leaking 401", async () => {
     const res = await getUsageSummary(anonymousRequest(BASE));
     expect(res.status).toBe(401);
     const body = await res.json();
     expect(body.error.code).toBe("UNAUTHORIZED");
+  });
+
+  it("prepends the '__all__' aggregate group labeled 'VyomFlow', totalling every tool + bare-LLM row across chats", async () => {
+    const user = await makeUser("user_summary_agg", 100);
+    // Two runs in the same chat (2 tools) + one run in a different chat
+    // (bare-LLM) — the aggregate's `records` must count 2 distinct chats,
+    // not the 3 (tool,run) pairs the other groups would count.
+    const chat1Run1 = await makeChatAndRun(user.id, 1);
+    const cropTool = await makeToolInvocation(chat1Run1.id, "call_crop", "crop_image");
+    await prisma.$transaction((tx) => reserveHold(tx, { runId: chat1Run1.id, userId: user.id, amount: 5 }));
+    await prisma.$transaction((tx) =>
+      captureForTool(tx, { runId: chat1Run1.id, userId: user.id, toolInvocationId: cropTool.id, amount: 5 }),
+    );
+
+    const chat1Message2 = await testDb.message.create({
+      data: { chatId: chat1Run1.chatId, role: "user", status: "complete", content: [{ type: "text", text: "hi" }] },
+    });
+    // First run must be non-active (queued/running/waiting) before a second
+    // run can be created on the same chat — agentrun_one_active_per_chat.
+    await testDb.agentRun.update({ where: { id: chat1Run1.id }, data: { status: "completed" } });
+    const chat1Run2 = await testDb.agentRun.create({
+      data: {
+        chatId: chat1Run1.chatId,
+        idempotencyKey: `send:${chat1Run1.chatId}:extra:1`,
+        userMessageId: chat1Message2.id,
+        requestedModel: "openrouter/free",
+        status: "completed",
+      },
+    });
+    const generateTool = await makeToolInvocation(chat1Run2.id, "call_generate", "generate_image");
+    await prisma.$transaction((tx) => reserveHold(tx, { runId: chat1Run2.id, userId: user.id, amount: 3 }));
+    await prisma.$transaction((tx) =>
+      captureForTool(tx, { runId: chat1Run2.id, userId: user.id, toolInvocationId: generateTool.id, amount: 3 }),
+    );
+
+    const chat2Run = await makeChatAndRun(user.id, 2);
+    await prisma.$transaction((tx) =>
+      recordUsage(tx, { runId: chat2Run.id, userId: user.id, turnIndex: 0, metadata: {} }),
+    );
+
+    const res = await getUsageSummary(authedRequest(BASE, "user_summary_agg"));
+    const body = await res.json();
+
+    expect(body.groups[0].toolKey).toBe("__all__");
+    expect(body.groups[0].displayName).toBe("VyomFlow");
+
+    const otherGroups = body.groups.filter((g: { toolKey: string }) => g.toolKey !== "__all__");
+    const expectedTotal = otherGroups.reduce((sum: number, g: { totalDebited: string }) => sum + Number(g.totalDebited), 0);
+    expect(Number(body.groups[0].totalDebited)).toBeCloseTo(expectedTotal, 6);
+    expect(Number(body.groups[0].totalDebited)).toBeCloseTo(8, 6);
+
+    // 2 distinct chats touched, not the 3 (tool,run) pairs recordsAll counts.
+    expect(body.groups[0].records).toBe(2);
+    expect(body.recordsAll).toBe(3);
+
+    // The aggregate is not folded into categoriesCount.
+    expect(body.categoriesCount).toBe(otherGroups.length);
   });
 });

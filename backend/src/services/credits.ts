@@ -11,12 +11,21 @@ import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { log } from "@/lib/logger";
 import { clampLimit, decodeCursor, encodeCursor } from "@/lib/cursor";
-import type { ListCreditLedgerQuery } from "@/contracts/credits";
+import { AGGREGATE_TOOL_KEY, type ListCreditLedgerQuery, type UsagePeriod } from "@/contracts/credits";
 import { CROP_IMAGE_TOOL_NAME, GENERATE_IMAGE_TOOL_NAME, MERGE_VIDEOS_TOOL_NAME } from "@/contracts/tools";
 
 // toolKey used for bare LLM usage rows (no ToolInvocation) — matches
 // listCreditLedger's own `tool` query-param sentinel below.
 const NO_TOOL_KEY = "none";
+
+// /usage page's period filter (2026-08-29) — real wall-clock cutoffs off
+// the current request time, never a fabricated "billing period" concept
+// this project has no such thing for. `null` means "all" — no lower bound.
+function periodCutoff(period: UsagePeriod): Date | null {
+  if (period === "all") return null;
+  const days = { "7d": 7, "30d": 30, "90d": 90 }[period];
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
 
 export class InsufficientCreditsError extends Error {
   constructor() {
@@ -482,12 +491,19 @@ function titleCaseToolName(name: string): string {
     .join(" ");
 }
 
-// Measured live against the reference product's /usage page (credits.md "/usage full
-// dashboard") — exact wording, do not reword.
+// The tool-specific labels below ("AI Crop Image" etc.) were measured live
+// against the reference product's /usage page (credits.md "/usage full
+// dashboard") — exact wording, do not reword those. The NO_TOOL_KEY label
+// is NOT reference-matched: it originally read "VyomFlow", but that name
+// belongs to the cross-tool aggregate group now (AGGREGATE_TOOL_KEY, in
+// getCreditUsageSummary) — VyomFlow is the whole product, not the
+// bare-LLM-turn bucket, and showing "VyomFlow: 0.00M" read as "the app
+// cost nothing" (2026-08-29 UX fix).
 // Exported so route handlers (e.g. the "Usage details" modal's per-step
 // tool label) can reuse the exact same mapping instead of duplicating it.
 export function toolDisplayName(toolKey: string): string {
-  if (toolKey === NO_TOOL_KEY) return "VyomFlow";
+  if (toolKey === NO_TOOL_KEY) return "AI Reasoning";
+  if (toolKey === AGGREGATE_TOOL_KEY) return "VyomFlow";
   switch (toolKey) {
     case CROP_IMAGE_TOOL_NAME:
       return "AI Crop Image";
@@ -559,7 +575,7 @@ function groupIntoUsageEntries(rows: UsageRow[]): Map<string, Map<string, { amou
  * `latestUsageAt` are unaffected by this — they're still the plain sum/max
  * over every row, since netting-by-run never changes a total or a max.
  */
-export async function getCreditUsageSummary(userId: string): Promise<{
+export async function getCreditUsageSummary(userId: string, period: UsagePeriod = "all"): Promise<{
   groups: Array<{
     toolKey: string;
     displayName: string;
@@ -573,9 +589,10 @@ export async function getCreditUsageSummary(userId: string): Promise<{
   periodStart: string | null;
   periodEnd: string | null;
 }> {
+  const cutoff = periodCutoff(period);
   const rows = await prisma.creditLedger.findMany({
-    where: { userId, kind: { in: ["CAPTURE", "USAGE"] } },
-    include: { toolInvocation: { select: { name: true } } },
+    where: { userId, kind: { in: ["CAPTURE", "USAGE"] }, ...(cutoff ? { createdAt: { gte: cutoff } } : {}) },
+    include: { toolInvocation: { select: { name: true } }, run: { select: { chatId: true } } },
   });
 
   const runsByTool = groupIntoUsageEntries(rows);
@@ -586,6 +603,7 @@ export async function getCreditUsageSummary(userId: string): Promise<{
   let recordsAll = 0;
   let periodStart: Date | null = null;
   let periodEnd: Date | null = null;
+  const chatIds = new Set<string>();
 
   for (const row of rows) {
     const toolKey = row.toolInvocation?.name ?? NO_TOOL_KEY;
@@ -597,20 +615,40 @@ export async function getCreditUsageSummary(userId: string): Promise<{
     totalAll = totalAll.plus(row.amount);
     if (!periodStart || row.createdAt < periodStart) periodStart = row.createdAt;
     if (!periodEnd || row.createdAt > periodEnd) periodEnd = row.createdAt;
+    if (row.run?.chatId) chatIds.add(row.run.chatId);
   }
 
   for (const runs of runsByTool.values()) {
     recordsAll += runs.size;
   }
 
+  // The "VyomFlow" aggregate (2026-08-29) — the whole-product total across
+  // every tool plus bare-LLM usage, prepended so it's the dropdown's default
+  // selection (usage-detailed-view.tsx defaults to groups[0]). Deliberately
+  // NOT folded into the `groups` Map above: that Map is also what
+  // `categoriesCount` counts, and the aggregate is not a category — it's
+  // the sum of all of them. `records` here counts distinct chats (this
+  // group's Detailed View lists per-chat rows, not per-run — see
+  // listUsageEntriesByChat), not the (tool, run) count the other groups use.
+  const aggregateGroup = {
+    toolKey: AGGREGATE_TOOL_KEY,
+    displayName: toolDisplayName(AGGREGATE_TOOL_KEY),
+    totalDebited: totalAll.toFixed(4),
+    records: chatIds.size,
+    latestUsageAt: periodEnd ? periodEnd.toISOString() : null,
+  };
+
   return {
-    groups: Array.from(groups.values()).map((acc) => ({
-      toolKey: acc.toolKey,
-      displayName: toolDisplayName(acc.toolKey),
-      totalDebited: acc.total.toFixed(4),
-      records: runsByTool.get(acc.toolKey)?.size ?? 0,
-      latestUsageAt: acc.latest.toISOString(),
-    })),
+    groups: [
+      aggregateGroup,
+      ...Array.from(groups.values()).map((acc) => ({
+        toolKey: acc.toolKey,
+        displayName: toolDisplayName(acc.toolKey),
+        totalDebited: acc.total.toFixed(4),
+        records: runsByTool.get(acc.toolKey)?.size ?? 0,
+        latestUsageAt: acc.latest.toISOString(),
+      })),
+    ],
     totalDebitedAll: totalAll.toFixed(4),
     recordsAll,
     categoriesCount: groups.size,
@@ -638,8 +676,14 @@ export async function getCreditUsageSummary(userId: string): Promise<{
 export async function listUsageEntries(
   userId: string,
   tool: string,
+  period: UsagePeriod = "all",
 ): Promise<Array<{ runId: string; amount: string; timestamp: string }>> {
-  const where: Prisma.CreditLedgerWhereInput = { userId, kind: { in: ["CAPTURE", "USAGE"] } };
+  const cutoff = periodCutoff(period);
+  const where: Prisma.CreditLedgerWhereInput = {
+    userId,
+    kind: { in: ["CAPTURE", "USAGE"] },
+    ...(cutoff ? { createdAt: { gte: cutoff } } : {}),
+  };
   if (tool === NO_TOOL_KEY) {
     where.toolInvocationId = null;
   } else {
@@ -660,4 +704,88 @@ export async function listUsageEntries(
       timestamp: acc.latest.toISOString(),
     }))
     .sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
+}
+
+/**
+ * S7 — per-chat netted usage for the "VyomFlow" aggregate group's Detailed
+ * View (2026-08-29 UX fix). Every CAPTURE/USAGE row across every tool and
+ * bare-LLM usage, netted by `run.chatId` instead of `(toolKey, runId)` —
+ * "where did my credits go" answered by chat, not by an arbitrary run id
+ * with no tool attached. A row whose run has no chat (should not happen —
+ * every AgentRun has a chatId) is skipped rather than merged under a
+ * synthetic bucket, matching groupIntoUsageEntries' own no-silent-merge
+ * stance for its null-runId case.
+ */
+export async function listUsageEntriesByChat(
+  userId: string,
+  period: UsagePeriod = "all",
+): Promise<Array<{ chatId: string; chatTitle: string; amount: string; timestamp: string }>> {
+  const cutoff = periodCutoff(period);
+  const rows = await prisma.creditLedger.findMany({
+    where: { userId, kind: { in: ["CAPTURE", "USAGE"] }, ...(cutoff ? { createdAt: { gte: cutoff } } : {}) },
+    include: { run: { select: { chatId: true, chat: { select: { title: true } } } } },
+  });
+
+  const byChat = new Map<string, { chatTitle: string; amount: PrismaRuntime.Decimal; latest: Date }>();
+  for (const row of rows) {
+    if (!row.run?.chatId) continue;
+    const acc = byChat.get(row.run.chatId) ?? {
+      chatTitle: row.run.chat.title,
+      amount: new PrismaRuntime.Decimal(0),
+      latest: row.createdAt,
+    };
+    acc.amount = acc.amount.plus(row.amount);
+    if (row.createdAt > acc.latest) acc.latest = row.createdAt;
+    byChat.set(row.run.chatId, acc);
+  }
+
+  return Array.from(byChat.entries())
+    .map(([chatId, acc]) => ({
+      chatId,
+      chatTitle: acc.chatTitle,
+      amount: acc.amount.toFixed(4),
+      timestamp: acc.latest.toISOString(),
+    }))
+    .sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
+}
+
+/**
+ * S7 — "VyomFlow" aggregate row's chat-scoped Details drill-down for `GET
+ * /api/v1/me/credits/ledger/chat/[chatId]` (2026-08-29 UX fix). A chat's row
+ * in `listUsageEntriesByChat` nets every tool/run in that chat into one
+ * amount — this lists it back out one row per (tool, run) via the same
+ * `groupIntoUsageEntries` netting `listUsageEntries` uses, just scoped to a
+ * chat instead of a single tool. Caller-scoped by `userId` on the ledger
+ * query itself (matching `listCreditLedgerByRun`'s own stance) — a chatId
+ * belonging to another user simply matches zero rows, never a separate
+ * ownership check.
+ */
+export async function listCreditLedgerByChat(
+  userId: string,
+  chatId: string,
+): Promise<{ chatTitle: string | null; items: Array<{ runId: string; toolName: string | null; amount: string; timestamp: string }> }> {
+  const rows = await prisma.creditLedger.findMany({
+    where: { userId, kind: { in: ["CAPTURE", "USAGE"] }, run: { chatId } },
+    include: { toolInvocation: { select: { name: true } }, run: { select: { chat: { select: { title: true } } } } },
+  });
+
+  if (rows.length === 0) {
+    return { chatTitle: null, items: [] };
+  }
+
+  const runsByTool = groupIntoUsageEntries(rows);
+  const items: Array<{ runId: string; toolName: string | null; amount: string; timestamp: string }> = [];
+  for (const [toolKey, runs] of runsByTool) {
+    for (const [runKey, acc] of runs) {
+      items.push({
+        runId: runKey.startsWith("row:") ? runKey.slice("row:".length) : runKey,
+        toolName: toolKey === NO_TOOL_KEY ? null : toolKey,
+        amount: acc.amount.toFixed(4),
+        timestamp: acc.latest.toISOString(),
+      });
+    }
+  }
+  items.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
+
+  return { chatTitle: rows[0]!.run!.chat.title, items };
 }

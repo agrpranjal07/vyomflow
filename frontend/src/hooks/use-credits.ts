@@ -3,14 +3,17 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useApiClient } from "@/hooks/use-api-client";
 import * as userService from "@/services/user";
+import type { UsagePeriod } from "@/contracts/credits";
 
 export const creditKeys = {
   all: ["credits"] as const,
   ledger: ["credits", "ledger"] as const,
   ledgerByTool: (tool: string) => ["credits", "ledger", tool] as const,
-  usageSummary: ["credits", "usage-summary"] as const,
+  usageSummary: (period: UsagePeriod) => ["credits", "usage-summary", period] as const,
   ledgerByRun: (runId: string) => ["credits", "ledger", "run", runId] as const,
-  usageEntries: (tool: string) => ["credits", "usage-entries", tool] as const,
+  usageEntries: (tool: string, period: UsagePeriod) => ["credits", "usage-entries", tool, period] as const,
+  usageEntriesByChat: (period: UsagePeriod) => ["credits", "usage-entries-by-chat", period] as const,
+  ledgerByChat: (chatId: string) => ["credits", "ledger", "chat", chatId] as const,
 };
 
 // Realtime-driven invalidation (use-active-run.ts's finalize()/per-tool
@@ -47,11 +50,11 @@ export function useCreditLedger(options: { enabled?: boolean; tool?: string } = 
 // S7 — /usage dashboard stat cards + Overview table (credits.md "/usage
 // full dashboard"). Not a live-updating surface, same posture as
 // useCreditLedger — no realtime wiring, no polling.
-export function useCreditUsageSummary() {
+export function useCreditUsageSummary(period: UsagePeriod = "all") {
   const fetcher = useApiClient();
   return useQuery({
-    queryKey: creditKeys.usageSummary,
-    queryFn: () => userService.getCreditUsageSummary(fetcher),
+    queryKey: creditKeys.usageSummary(period),
+    queryFn: () => userService.getCreditUsageSummary(fetcher, period),
     staleTime: CREDITS_STALE_TIME_MS,
   });
 }
@@ -74,12 +77,41 @@ export function useCreditLedgerByRun(runId: string | null) {
 // — Action/'View details' drill-down gap", netted-rows fold-in). One row
 // per run within the selected tool bucket, not one per raw ledger row —
 // see backend/src/services/credits.ts's listUsageEntries.
-export function useCreditUsageEntries(tool: string | undefined) {
+export function useCreditUsageEntries(tool: string | undefined, period: UsagePeriod = "all") {
   const fetcher = useApiClient();
   return useQuery({
-    queryKey: creditKeys.usageEntries(tool ?? ""),
-    queryFn: () => userService.getCreditUsageEntries(fetcher, tool as string),
+    queryKey: creditKeys.usageEntries(tool ?? "", period),
+    queryFn: () => userService.getCreditUsageEntries(fetcher, tool as string, period),
     enabled: tool !== undefined,
+    staleTime: CREDITS_STALE_TIME_MS,
+  });
+}
+
+// S7 — Detailed View tab's "VyomFlow" aggregate group (2026-08-29 UX fix).
+// Netted per-chat across every tool + bare-LLM usage combined — see
+// backend/src/services/credits.ts's listUsageEntriesByChat. Only mounted
+// when that group is selected (UsageChatBreakdownList), so no `enabled`
+// gate is needed here the way useCreditUsageEntries needs one for its
+// optional `tool`.
+export function useCreditUsageEntriesByChat(period: UsagePeriod = "all") {
+  const fetcher = useApiClient();
+  return useQuery({
+    queryKey: creditKeys.usageEntriesByChat(period),
+    queryFn: () => userService.getCreditUsageEntriesByChat(fetcher, period),
+    staleTime: CREDITS_STALE_TIME_MS,
+  });
+}
+
+// "VyomFlow" aggregate row's Details drill-down (2026-08-29) — one row per
+// (tool, run) within the clicked chat, mirroring useCreditLedgerByRun's
+// `enabled`-gated-by-id shape since it's only fetched once a chat row is
+// selected in UsageChatDetailsDialog.
+export function useCreditLedgerByChat(chatId: string | null) {
+  const fetcher = useApiClient();
+  return useQuery({
+    queryKey: creditKeys.ledgerByChat(chatId ?? ""),
+    queryFn: () => userService.getCreditLedgerByChat(fetcher, chatId as string),
+    enabled: chatId !== null,
     staleTime: CREDITS_STALE_TIME_MS,
   });
 }

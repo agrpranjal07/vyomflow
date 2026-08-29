@@ -2,31 +2,29 @@
 
 import { formatCredits } from "@/lib/format";
 import { formatEntryDate, ViewDetailsButton } from "@/components/chat/credit-ledger-view";
-import { useCreditUsageEntries } from "@/hooks/use-credits";
-import type { CreditUsageEntryDTO, UsagePeriod } from "@/contracts/credits";
+import { useCreditUsageEntriesByChat } from "@/hooks/use-credits";
+import type { CreditUsageChatEntryDTO, UsagePeriod } from "@/contracts/credits";
 
 /**
- * Detailed View tab's record table (credits.md "`/usage` — Action/'View
- * details' drill-down gap", netted-rows fold-in) — one row per netted
- * usage entry (one per run within the selected tool bucket, via the
- * backend's `listUsageEntries`), NOT one row per raw `CreditLedger` row.
- * Before this, `CreditLedgerList` rendered every raw RESERVE/CAPTURE/
- * RELEASE/USAGE row belonging to a run as its own top-level row (a handful
- * of turns exploding into dozens of near-duplicate rows); this component
- * replaces it as UsageDetailedView's list. `CreditLedgerList` itself is
- * left in place (assignment §10's own raw-transaction-log surface, still
- * covered by its own tests) — just no longer this view's data source.
+ * Detailed View tab's record table for the "VyomFlow" aggregate group
+ * (2026-08-29 UX fix) — one row per chat, netted across every tool + bare-LLM
+ * usage combined (backend's `listUsageEntriesByChat`), not one row per run
+ * within a single tool bucket the way `UsageEntryList` renders for every
+ * other group. Selecting the whole-product total and then seeing per-run
+ * rows scoped to no particular tool was the confusing signal being fixed —
+ * "where did my credits go" is answered per chat here instead. Details opens
+ * UsageChatDetailsDialog (one row per tool/run within that chat), the same
+ * ViewDetailsButton every other group's table uses — not a link that
+ * navigates away, since every other Details action stays on this page too.
  */
-export function UsageEntryList({
-  tool,
+export function UsageChatBreakdownList({
   period,
   onViewDetails,
 }: {
-  tool: string;
   period: UsagePeriod;
-  onViewDetails: (entry: CreditUsageEntryDTO) => void;
+  onViewDetails: (entry: CreditUsageChatEntryDTO) => void;
 }) {
-  const { data, isLoading, isError } = useCreditUsageEntries(tool, period);
+  const { data, isLoading, isError } = useCreditUsageEntriesByChat(period);
   const entries = data?.entries ?? [];
 
   return (
@@ -49,7 +47,7 @@ export function UsageEntryList({
           <tbody>
             {entries.map((entry) => (
               <tr
-                key={entry.runId}
+                key={entry.chatId}
                 className="border-b border-border-hairline transition-colors last:border-b-0 hover:bg-surface-thumbnail/50"
               >
                 <td className="p-4 align-middle text-sm font-bold text-text-primary">{formatCredits(Number(entry.amount))}</td>
