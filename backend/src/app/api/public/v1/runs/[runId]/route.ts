@@ -23,7 +23,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ runId: s
 
   const reconciled = await reconcileIfStale(run);
   const toolInvocations = await listToolInvocationDTOs(reconciled.id);
-  const pendingWaitpointRow = await prisma.waitpoint.findFirst({ where: { agentRunId: reconciled.id, status: "PENDING" } });
+  const pendingWaitpointRow = await prisma.waitpoint.findFirst({
+    where: { agentRunId: reconciled.id, status: "PENDING" },
+    orderBy: { createdAt: "desc" },
+  });
   const pendingWaitpoint = pendingWaitpointRow ? toWaitpointDTO(pendingWaitpointRow) : null;
   return publicJson(AgentRunDTOSchema.parse(toAgentRunDTO(reconciled, toolInvocations, pendingWaitpoint)));
 }

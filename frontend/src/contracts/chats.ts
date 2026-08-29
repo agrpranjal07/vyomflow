@@ -1,4 +1,4 @@
-// GENERATED — do not edit. Source: c9a2eb298ce02df0d3dd251bf7973b1da3131683:src/contracts/chats.ts
+// GENERATED — do not edit. Source: efa62177f60585ee7502f39b7ea874721096b9e9:src/contracts/chats.ts
 import { z } from "zod";
 import { CursorQuerySchema, PageSchema } from "@/contracts/common";
 

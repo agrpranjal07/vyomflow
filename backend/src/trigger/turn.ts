@@ -559,7 +559,11 @@ function buildToolExecutor(ctx: BuildExecutorContext) {
         toolName: c.toolName,
         estimatedCredits: c.estimate,
       }));
-      const totalEstimate = needsApproval.reduce((sum, c) => sum + c.estimate, 0);
+      // Plain float summation (0.1 + 0.1 + 0.1) produces IEEE-754 artifacts
+      // like 0.30000000000000004 — round before this reaches the DB/stream
+      // so every consumer (approval overlay, MCP instruction text) sees a
+      // clean number rather than each needing its own display-side rounding.
+      const totalEstimate = Math.round(needsApproval.reduce((sum, c) => sum + c.estimate, 0) * 1e6) / 1e6;
 
       const created = await prisma.$transaction((tx) =>
         createWaitpoint(tx, {
