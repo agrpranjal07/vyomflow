@@ -380,4 +380,41 @@ describe("latestWaitpointFromStream", () => {
     ];
     expect(latestWaitpointFromStream(parts)).toEqual(creditApproval);
   });
+
+  it("normalizes a legacy pre-2026-08-29 requestPayload shape ({toolName, estimatedCredits, threshold}, no `calls` array) via CreditApprovalRequestPayloadSchema's preprocess upgrade, rather than returning null or throwing", () => {
+    const legacyWaitpoint = {
+      id: "wp-legacy",
+      agentRunId: "run1",
+      kind: "CREDIT_APPROVAL",
+      status: "PENDING",
+      requestPayload: { toolName: "gpt_image_2", estimatedCredits: 0.1, threshold: 0.08 },
+      resolvedPayload: null,
+      expiresAt: "2026-08-21T21:00:00.000Z",
+      resolvedAt: null,
+    };
+    const parts: TurnStreamPart[] = [waitpointPart(0, legacyWaitpoint as unknown as WaitpointDTO)];
+    const result = latestWaitpointFromStream(parts);
+    expect(result).not.toBeNull();
+    expect(result!.kind).toBe("CREDIT_APPROVAL");
+    const payload = (result as Extract<WaitpointDTO, { kind: "CREDIT_APPROVAL" }>).requestPayload;
+    expect(Array.isArray(payload.calls)).toBe(true);
+    expect(payload.calls).toHaveLength(1);
+    expect(payload.calls[0]).toMatchObject({ toolName: "gpt_image_2", estimatedCredits: 0.1 });
+    expect(payload.estimatedCredits).toBe(0.1);
+    expect(payload.threshold).toBe(0.08);
+  });
+
+  it("silently skips a genuinely malformed waitpoint (missing required fields / unrecognized kind) and returns null rather than throwing", () => {
+    const garbage = { id: "wp-garbage", kind: "NOT_A_REAL_KIND", status: "PENDING" };
+    const parts: TurnStreamPart[] = [waitpointPart(0, garbage as unknown as WaitpointDTO)];
+    expect(() => latestWaitpointFromStream(parts)).not.toThrow();
+    expect(latestWaitpointFromStream(parts)).toBeNull();
+  });
+
+  it("falls back to a lower-index valid waitpoint when a higher-index part is malformed, instead of returning null", () => {
+    const valid = creditApprovalWaitpoint({ id: "wp-valid" });
+    const garbage = { id: "wp-garbage", kind: "NOT_A_REAL_KIND", status: "PENDING" };
+    const parts: TurnStreamPart[] = [waitpointPart(0, valid), waitpointPart(1, garbage as unknown as WaitpointDTO)];
+    expect(latestWaitpointFromStream(parts)).toEqual(valid);
+  });
 });

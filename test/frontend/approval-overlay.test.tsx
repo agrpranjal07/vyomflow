@@ -56,8 +56,8 @@ describe("ApprovalOverlay — S6 waitpoint visibility in the UI", () => {
   it("makes a CREDIT_APPROVAL waitpoint visible with the tool name, estimate, and threshold", () => {
     render(<ApprovalOverlay waitpoint={creditApprovalWaitpoint()} onRespond={vi.fn()} />);
     expect(screen.getByRole("group", { name: "Credit approval requested" })).toBeInTheDocument();
-    expect(screen.getByText(/gpt_image_2 — ~0\.1M credits/)).toBeInTheDocument();
-    expect(screen.getByText(/will use ~0\.1M credits/)).toBeInTheDocument();
+    expect(screen.getByText(/gpt_image_2 — ~0\.10M credits/)).toBeInTheDocument();
+    expect(screen.getByText(/will use ~0\.10M credits/)).toBeInTheDocument();
     expect(screen.getByText(/threshold 0\.08M/)).toBeInTheDocument();
   });
 
@@ -79,12 +79,12 @@ describe("ApprovalOverlay — S6 waitpoint visibility in the UI", () => {
       />,
     );
     // Round total, not any single call's estimate.
-    expect(screen.getByText(/0\.3M credits/)).toBeInTheDocument();
+    expect(screen.getByText(/0\.30M credits/)).toBeInTheDocument();
     // Every call renders, not just the first — this is the whole point of
     // hoisting approval to one round-level waitpoint (2026-08-29 fix): three
     // over-threshold calls in one round must produce ONE prompt listing all
     // three, not three separate prompts.
-    expect(screen.getAllByText(/generate_image — ~0\.1M credits/)).toHaveLength(3);
+    expect(screen.getAllByText(/generate_image — ~0\.10M credits/)).toHaveLength(3);
     // Still a single Decline/Approve pair — all-or-nothing per round, not
     // per-call granularity.
     expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(1);
@@ -204,5 +204,16 @@ describe("ApprovalOverlay — S6 waitpoint visibility in the UI", () => {
     // the suppression responsibility lives entirely upstream.
     rerender(<ApprovalOverlay key={wp.id} waitpoint={wp} onRespond={onRespond} />);
     expect(screen.getByRole("button", { name: "Approve" })).not.toBeDisabled();
+  });
+
+  it("guards against a requestPayload missing `calls` entirely (e.g. a mis-normalized legacy payload) by rendering an empty list instead of throwing", () => {
+    const waitpoint = creditApprovalWaitpoint({
+      requestPayload: { estimatedCredits: 0.1, threshold: 0.08 } as unknown as WaitpointDTO["requestPayload"],
+    });
+    expect(() => render(<ApprovalOverlay waitpoint={waitpoint} onRespond={vi.fn()} />)).not.toThrow();
+    expect(screen.getByRole("group", { name: "Credit approval requested" })).toBeInTheDocument();
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Decline" })).toBeInTheDocument();
   });
 });

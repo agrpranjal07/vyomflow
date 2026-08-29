@@ -1,4 +1,4 @@
-// GENERATED — do not edit. Source: c9a2eb298ce02df0d3dd251bf7973b1da3131683:src/contracts/waitpoints.ts
+// GENERATED — do not edit. Source: efa62177f60585ee7502f39b7ea874721096b9e9:src/contracts/waitpoints.ts
 /**
  * S6 — Waitpoint contracts (.claude/specs/S6-reliability-implementation-plan.md
  * §6.2/§6.2a/§7.1). Pure Zod only, same rules as every other file under
@@ -27,11 +27,33 @@ export const CreditApprovalCallSchema = z.object({
 });
 export type CreditApprovalCall = z.infer<typeof CreditApprovalCallSchema>;
 
-export const CreditApprovalRequestPayloadSchema = z.object({
+const CreditApprovalRequestPayloadObjectSchema = z.object({
   calls: z.array(CreditApprovalCallSchema).min(1),
   estimatedCredits: z.number().nonnegative(), // round total across `calls`
   threshold: z.number().nonnegative(),
 });
+
+/**
+ * Pre-2026-08-29 rows (and a worker still running that code — the
+ * Trigger.dev worker deploys independently of this API, so version skew
+ * between them is a normal, recurring condition, not a one-off migration
+ * window) persist the older single-call shape
+ * `{toolName, estimatedCredits, threshold}`. Upgrade it to the round shape
+ * before validating, so every consumer of this schema — this backend's own
+ * `.parse`, the frontend's REST parse, and the frontend's realtime-stream
+ * parse (all copied verbatim from this file by `contracts:sync`) — sees one
+ * shape and none of them needs its own compatibility branch.
+ */
+export const CreditApprovalRequestPayloadSchema = z.preprocess((raw) => {
+  const p = raw as Record<string, unknown> | null;
+  if (!p || Array.isArray(p.calls)) return raw; // already current shape (or malformed enough to fail below either way)
+  if (typeof p.toolName !== "string") return raw;
+  return {
+    calls: [{ toolCallId: "", toolName: p.toolName, estimatedCredits: p.estimatedCredits ?? 0 }],
+    estimatedCredits: p.estimatedCredits ?? 0,
+    threshold: p.threshold ?? 0,
+  };
+}, CreditApprovalRequestPayloadObjectSchema);
 export const ClarificationRequestPayloadSchema = z.object({
   question: z.string(),
   options: z.array(z.string()).optional(),

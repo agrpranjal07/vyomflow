@@ -5,6 +5,7 @@ import { IconAlertTriangle, IconHelpCircle } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { WaitpointDTO, RespondToWaitpointRequest } from "@/contracts/waitpoints";
+import { formatCredits } from "@/lib/format";
 
 /**
  * In-flow approval/clarification prompt for a run's `pendingWaitpoint`
@@ -89,17 +90,26 @@ function CreditApproval({
   onApprove: () => void;
   onDecline: () => void;
 }) {
+  // Last-resort guard, matching Clarification's own `options &&
+  // options.length > 0` pattern below: a waitpoint DTO reaching here should
+  // already be normalized (backend contract's z.preprocess upgrades legacy
+  // rows, and the realtime-stream path safeParses — see run-status.ts), but
+  // this is the one place that would otherwise throw on a payload shape it
+  // doesn't recognize, taking the whole chat down with no error boundary to
+  // catch it.
   const { calls, estimatedCredits, threshold } = requestPayload;
+  const safeCalls = Array.isArray(calls) ? calls : [];
   return (
     <div className="flex flex-col gap-2">
       <span className="flex items-center gap-2">
         <IconAlertTriangle className="size-4 shrink-0 text-text-warning" />
-        This round will use ~{estimatedCredits}M credits (threshold {threshold}M) — continue?
+        This round will use ~{formatCredits(estimatedCredits)} credits (threshold {formatCredits(threshold)}) —
+        continue?
       </span>
       <ul className="flex flex-col gap-1 pl-6 text-xs text-muted-foreground">
-        {calls.map((call) => (
+        {safeCalls.map((call) => (
           <li key={call.toolCallId}>
-            {call.toolName} — ~{call.estimatedCredits}M credits
+            {call.toolName} — ~{formatCredits(call.estimatedCredits)} credits
           </li>
         ))}
       </ul>

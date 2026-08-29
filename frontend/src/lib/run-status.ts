@@ -7,6 +7,7 @@
 import type { TurnStreamPart, ToolStreamPart, AgentRunStatus } from "@/contracts/runs";
 import type { ToolInvocationDTO, ToolInvocationStatus } from "@/contracts/tools";
 import type { WaitpointDTO } from "@/contracts/waitpoints";
+import { WaitpointDTOSchema } from "@/contracts/waitpoints";
 
 /** A live tool-stream entry, possibly upgraded with REST-reconciled `durationMs` (mergeRestToolState below) — the wire `type:"tool"` stream part itself doesn't carry duration. */
 export type LiveToolState = ToolStreamPart & { durationMs?: number | null };
@@ -268,12 +269,24 @@ export function buildStreamedSegments(
  * waitpoint over realtime, without waiting on a REST reconcile
  * (S6-reliability-implementation-plan.md §7.8). `null` when no waitpoint
  * part has arrived this run.
+ *
+ * `TurnStreamPart` is a compile-time type only — the Trigger.dev realtime
+ * SDK hands back whatever JSON the worker actually wrote, cast to it. A
+ * worker running older/newer code than this frontend (the worker deploys
+ * independently — see backend/src/contracts/waitpoints.ts's compatibility
+ * note) can emit a shape this frontend doesn't expect; safeParse here is
+ * what stops that from reaching ApprovalOverlay as raw, unvalidated JSON
+ * and crashing the render with no error boundary to catch it. Every REST
+ * waitpoint read is already validated this way (AgentRunDTOSchema.parse in
+ * services/runs.ts) — this closes the one path that wasn't.
  */
 export function latestWaitpointFromStream(parts: TurnStreamPart[]): WaitpointDTO | null {
   let latest: { index: number; waitpoint: WaitpointDTO } | null = null;
   for (const part of parts) {
     if (part.type !== "waitpoint") continue;
-    if (!latest || part.index > latest.index) latest = { index: part.index, waitpoint: part.waitpoint };
+    const parsed = WaitpointDTOSchema.safeParse(part.waitpoint);
+    if (!parsed.success) continue;
+    if (!latest || part.index > latest.index) latest = { index: part.index, waitpoint: parsed.data };
   }
   return latest?.waitpoint ?? null;
 }

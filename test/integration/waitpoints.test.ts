@@ -37,6 +37,8 @@ vi.mock("@/trigger/tool", () => ({ mediaTool: { triggerAndWait, batchTriggerAndW
 import { POST as createChat } from "@/app/api/v1/chats/route";
 import { POST as sendMessage } from "@/app/api/v1/chats/[chatId]/messages/route";
 import { POST as respondWaitpoint } from "@/app/api/v1/waitpoints/[waitpointId]/respond/route";
+import { GET as getRun } from "@/app/api/v1/runs/[runId]/route";
+import { GET as getPublicRun } from "@/app/api/public/v1/runs/[runId]/route";
 import { executeAgentTurn } from "@/trigger/turn";
 import { createWaitpoint } from "@/services/waitpoints";
 import { authedRequest } from "../support/request";
@@ -507,5 +509,63 @@ describe("CREDIT_APPROVAL — round-level waitpoint (2026-08-29 fix)", () => {
     await expect(createOnce()).resolves.toEqual(first); // must not throw P2002 on the duplicate triggerTokenId
     const rows = await testDb.waitpoint.findMany({ where: { triggerTokenId } });
     expect(rows).toHaveLength(1);
+  });
+});
+
+describe("CREDIT_APPROVAL — legacy single-call payload compatibility (2026-08-29 backfill)", () => {
+  it("GET /api/v1/runs/{runId} upgrades a legacy single-call requestPayload row to the round shape, not a 500", async () => {
+    const userId = "user_legacy_payload_private";
+    const chat = await createChatAs(userId);
+    const { run } = await sendAs(userId, chat.id);
+
+    await testDb.waitpoint.create({
+      data: {
+        agentRunId: run.id,
+        kind: "CREDIT_APPROVAL",
+        status: "PENDING",
+        requestPayload: { toolName: "generate_image", estimatedCredits: 0.1, threshold: 0.08 },
+        triggerTokenId: `wpt_legacy_${run.id}`,
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+
+    const res = await getRun(authedRequest(`http://localhost/api/v1/runs/${run.id}`, userId), {
+      params: Promise.resolve({ runId: run.id }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.pendingWaitpoint.requestPayload.calls).toEqual([
+      { toolCallId: "", toolName: "generate_image", estimatedCredits: 0.1 },
+    ]);
+  });
+
+  it("GET /api/public/v1/runs/{runId} upgrades the same legacy row for the public API surface", async () => {
+    const userId = "user_legacy_payload_public";
+    const chat = await createChatAs(userId);
+    const { run } = await sendAs(userId, chat.id);
+
+    await testDb.waitpoint.create({
+      data: {
+        agentRunId: run.id,
+        kind: "CREDIT_APPROVAL",
+        status: "PENDING",
+        requestPayload: { toolName: "generate_image", estimatedCredits: 0.1, threshold: 0.08 },
+        triggerTokenId: `wpt_legacy_pub_${run.id}`,
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+
+    const res = await getPublicRun(
+      authedRequest(`http://localhost/api/public/v1/runs/${run.id}`, userId, { scopes: ["runs:read"] }),
+      { params: Promise.resolve({ runId: run.id }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.pendingWaitpoint.requestPayload.calls).toHaveLength(1);
+    expect(body.pendingWaitpoint.requestPayload.calls[0]).toEqual({
+      toolCallId: "",
+      toolName: "generate_image",
+      estimatedCredits: 0.1,
+    });
   });
 });
