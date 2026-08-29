@@ -2435,6 +2435,40 @@
           "periodEnd"
         ]
       },
+      "ListCreditUsageChatEntriesResponse": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "chatId": {
+                  "type": "string"
+                },
+                "chatTitle": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "string"
+                },
+                "timestamp": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "chatId",
+                "chatTitle",
+                "amount",
+                "timestamp"
+              ]
+            }
+          }
+        },
+        "required": [
+          "entries"
+        ]
+      },
       "ListCreditUsageEntriesResponse": {
         "type": "object",
         "properties": {
@@ -2530,6 +2564,50 @@
         },
         "required": [
           "chatId",
+          "items"
+        ]
+      },
+      "CreditChatRuns": {
+        "type": "object",
+        "properties": {
+          "chatTitle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "runId": {
+                  "type": "string"
+                },
+                "toolName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "amount": {
+                  "type": "string"
+                },
+                "timestamp": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "runId",
+                "toolName",
+                "amount",
+                "timestamp"
+              ]
+            }
+          }
+        },
+        "required": [
+          "chatTitle",
           "items"
         ]
       },
@@ -5011,10 +5089,27 @@
           "Credits"
         ],
         "summary": "Get the caller's real per-tool credit usage aggregation",
-        "description": "A `GROUP BY toolInvocation.name` aggregation over `CreditLedger` CAPTURE/USAGE rows — backs the /usage dashboard's stat cards and Overview tab.",
+        "description": "A `GROUP BY toolInvocation.name` aggregation over `CreditLedger` CAPTURE/USAGE rows — backs the /usage dashboard's stat cards and Overview tab. Optional `?period=` (7d/30d/90d/all, default all) scopes it to a rolling window off the current time.",
         "security": [
           {
             "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d",
+                "all"
+              ],
+              "default": "all"
+            },
+            "required": false,
+            "name": "period",
+            "in": "query"
           }
         ],
         "responses": {
@@ -5047,7 +5142,7 @@
           "Credits"
         ],
         "summary": "List the caller's netted usage entries for one tool bucket",
-        "description": "One row per run within the requested tool bucket (backs the /usage Detailed View tab's record table) — `amount` is that run's CAPTURE/USAGE total, never RESERVE/RELEASE.",
+        "description": "One row per run within the requested tool bucket (backs the /usage Detailed View tab's record table) — `amount` is that run's CAPTURE/USAGE total, never RESERVE/RELEASE. Optional `?period=` (7d/30d/90d/all, default all) scopes it to a rolling window.",
         "security": [
           {
             "ClerkBearer": []
@@ -5060,6 +5155,21 @@
             },
             "required": true,
             "name": "tool",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d",
+                "all"
+              ],
+              "default": "all"
+            },
+            "required": false,
+            "name": "period",
             "in": "query"
           }
         ],
@@ -5080,6 +5190,59 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/credits/usage-entries-by-chat": {
+      "get": {
+        "tags": [
+          "Credits"
+        ],
+        "summary": "List the caller's netted usage entries grouped by chat",
+        "description": "One row per chat across every tool and bare-LLM usage combined — backs the /usage Detailed View tab's 'VyomFlow' aggregate group, whose total spans every category rather than one bucket. Optional `?period=` (7d/30d/90d/all, default all) scopes it to a rolling window.",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d",
+                "all"
+              ],
+              "default": "all"
+            },
+            "required": false,
+            "name": "period",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Netted usage entries grouped by chat.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListCreditUsageChatEntriesResponse"
                 }
               }
             }
@@ -5126,6 +5289,52 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CreditRunSteps"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/credits/ledger/chat/{chatId}": {
+      "get": {
+        "tags": [
+          "Credits"
+        ],
+        "summary": "Get one chat's netted credit usage broken down by run",
+        "description": "One row per (tool, run) within the chat — backs the 'VyomFlow' aggregate row's Details drill-down, since that row nets a whole chat's spend across every tool/run with no single runId to key the run-scoped step breakdown off of. Caller-scoped: a chatId belonging to another user returns an empty `items`/`null` chatTitle, never a 404/403 leak.",
+        "security": [
+          {
+            "ClerkBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "That chat's netted usage, one row per run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditChatRuns"
                 }
               }
             }

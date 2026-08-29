@@ -24,7 +24,7 @@ export async function GET(req: Request) {
   const parsed = ListCreditUsageEntriesQuerySchema.safeParse(Object.fromEntries(url.searchParams));
   if (!parsed.success) return badRequest("Invalid query parameters.", parsed.error.flatten());
 
-  const entries = await listUsageEntries(auth.userId, parsed.data.tool);
-  log.info("credits.usage_entries_read", { userId: auth.userId, tool: parsed.data.tool });
+  const entries = await listUsageEntries(auth.userId, parsed.data.tool, parsed.data.period);
+  log.info("credits.usage_entries_read", { userId: auth.userId, tool: parsed.data.tool, period: parsed.data.period });
   return json(ListCreditUsageEntriesResponseSchema.parse({ entries }));
 }

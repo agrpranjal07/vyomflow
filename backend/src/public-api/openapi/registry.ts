@@ -56,12 +56,16 @@ import {
 import { z } from "zod";
 import {
   CreditBalanceDTOSchema,
+  CreditChatRunsDTOSchema,
   CreditRunStepsDTOSchema,
   CreditUsageSummaryDTOSchema,
   ListCreditLedgerQuerySchema,
   ListCreditLedgerResponseSchema,
   ListCreditUsageEntriesQuerySchema,
   ListCreditUsageEntriesResponseSchema,
+  ListCreditUsageChatEntriesQuerySchema,
+  ListCreditUsageChatEntriesResponseSchema,
+  UsagePeriodQuerySchema,
 } from "@/contracts/credits";
 import { SetWebhookEndpointRequestSchema, WebhookEndpointDTOSchema } from "@/contracts/webhooks";
 import { PublicSendTurnResponseSchema } from "@/public-api/mappers";
@@ -361,12 +365,18 @@ export function buildRegistry(): OpenAPIRegistry {
   const CreditBalance = registry.register("CreditBalance", CreditBalanceDTOSchema);
   const ListCreditLedgerResponse = registry.register("ListCreditLedgerResponse", ListCreditLedgerResponseSchema);
   const CreditUsageSummary = registry.register("CreditUsageSummary", CreditUsageSummaryDTOSchema);
+  const ListCreditUsageChatEntriesResponse = registry.register(
+    "ListCreditUsageChatEntriesResponse",
+    ListCreditUsageChatEntriesResponseSchema,
+  );
   const ListCreditUsageEntriesResponse = registry.register(
     "ListCreditUsageEntriesResponse",
     ListCreditUsageEntriesResponseSchema,
   );
   const CreditRunSteps = registry.register("CreditRunSteps", CreditRunStepsDTOSchema);
+  const CreditChatRuns = registry.register("CreditChatRuns", CreditChatRunsDTOSchema);
   const RunIdParam = z.object({ runId: z.string() });
+  const ChatIdParam = z.object({ chatId: z.string() });
 
   registry.registerPath({
     method: "get",
@@ -408,8 +418,10 @@ export function buildRegistry(): OpenAPIRegistry {
     summary: "Get the caller's real per-tool credit usage aggregation",
     description:
       "A `GROUP BY toolInvocation.name` aggregation over `CreditLedger` CAPTURE/USAGE rows — " +
-      "backs the /usage dashboard's stat cards and Overview tab.",
+      "backs the /usage dashboard's stat cards and Overview tab. Optional `?period=` " +
+      "(7d/30d/90d/all, default all) scopes it to a rolling window off the current time.",
     security,
+    request: { query: UsagePeriodQuerySchema },
     responses: {
       200: {
         description: "Per-tool usage groups plus overall totals.",
@@ -426,7 +438,8 @@ export function buildRegistry(): OpenAPIRegistry {
     summary: "List the caller's netted usage entries for one tool bucket",
     description:
       "One row per run within the requested tool bucket (backs the /usage Detailed View tab's " +
-      "record table) — `amount` is that run's CAPTURE/USAGE total, never RESERVE/RELEASE.",
+      "record table) — `amount` is that run's CAPTURE/USAGE total, never RESERVE/RELEASE. " +
+      "Optional `?period=` (7d/30d/90d/all, default all) scopes it to a rolling window.",
     security,
     request: { query: ListCreditUsageEntriesQuerySchema },
     responses: {
@@ -436,6 +449,26 @@ export function buildRegistry(): OpenAPIRegistry {
       },
       401: errorResponse("Missing or invalid credentials."),
       400: errorResponse("Invalid query parameters (missing `tool`)."),
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/me/credits/usage-entries-by-chat",
+    tags: ["Credits"],
+    summary: "List the caller's netted usage entries grouped by chat",
+    description:
+      "One row per chat across every tool and bare-LLM usage combined — backs the /usage Detailed " +
+      "View tab's 'VyomFlow' aggregate group, whose total spans every category rather than one bucket. " +
+      "Optional `?period=` (7d/30d/90d/all, default all) scopes it to a rolling window.",
+    security,
+    request: { query: ListCreditUsageChatEntriesQuerySchema },
+    responses: {
+      200: {
+        description: "Netted usage entries grouped by chat.",
+        content: { "application/json": { schema: ListCreditUsageChatEntriesResponse } },
+      },
+      401: errorResponse("Missing or invalid credentials."),
     },
   });
 
@@ -455,6 +488,27 @@ export function buildRegistry(): OpenAPIRegistry {
       200: {
         description: "That run's full ledger step breakdown.",
         content: { "application/json": { schema: CreditRunSteps } },
+      },
+      401: errorResponse("Missing or invalid credentials."),
+    },
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/me/credits/ledger/chat/{chatId}",
+    tags: ["Credits"],
+    summary: "Get one chat's netted credit usage broken down by run",
+    description:
+      "One row per (tool, run) within the chat — backs the 'VyomFlow' aggregate row's Details " +
+      "drill-down, since that row nets a whole chat's spend across every tool/run with no single " +
+      "runId to key the run-scoped step breakdown off of. Caller-scoped: a chatId belonging to " +
+      "another user returns an empty `items`/`null` chatTitle, never a 404/403 leak.",
+    security,
+    request: { params: ChatIdParam },
+    responses: {
+      200: {
+        description: "That chat's netted usage, one row per run.",
+        content: { "application/json": { schema: CreditChatRuns } },
       },
       401: errorResponse("Missing or invalid credentials."),
     },

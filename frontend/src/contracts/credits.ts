@@ -1,4 +1,4 @@
-// GENERATED — do not edit. Source: c9a2eb298ce02df0d3dd251bf7973b1da3131683:src/contracts/credits.ts
+// GENERATED — do not edit. Source: efa62177f60585ee7502f39b7ea874721096b9e9:src/contracts/credits.ts
 /**
  * S7 — credit balance read contract (00-master-spec.md §4,
  * S7-agent-runtime-implementation-plan.md §6.1). Pure Zod only, same rules
@@ -46,13 +46,33 @@ export type ListCreditLedgerQuery = z.infer<typeof ListCreditLedgerQuerySchema>;
 export const ListCreditLedgerResponseSchema = PageSchema(CreditLedgerEntryDTOSchema);
 export type ListCreditLedgerResponse = z.infer<typeof ListCreditLedgerResponseSchema>;
 
+// The synthetic `toolKey` for the cross-tool "VyomFlow" aggregate group
+// (2026-08-29 — VyomFlow is the whole product, not the bare-LLM-turn
+// bucket; see AGGREGATE_TOOL_KEY's use in getCreditUsageSummary). Shared
+// between backend and frontend via contracts:sync so neither hand-rolls
+// the sentinel string.
+export const AGGREGATE_TOOL_KEY = "__all__";
+
+// The /usage page's period filter (2026-08-29 — "give an option to select
+// and change period"). `"all"` is every call site's default — the same
+// unfiltered history this endpoint already returned before this filter
+// existed, so an omitted `?period=` never changes existing behavior.
+export const UsagePeriodSchema = z.enum(["7d", "30d", "90d", "all"]);
+export type UsagePeriod = z.infer<typeof UsagePeriodSchema>;
+
+export const UsagePeriodQuerySchema = z.object({
+  period: UsagePeriodSchema.optional().default("all"),
+});
+export type UsagePeriodQuery = z.infer<typeof UsagePeriodQuerySchema>;
+
 // S7 — /usage "AI Credits Overview" dashboard (implementation plan §5.2/
 // §6.2, credits.md "/usage full dashboard — re-verified"). A real
 // GROUP BY toolInvocation.name aggregation over CreditLedger CAPTURE/USAGE
 // rows only — RESERVE/RELEASE are hold-lifecycle bookkeeping, never counted
 // as debited (counting them would double-count the same spend against
 // CAPTURE). `toolKey` is "none" for bare LLM usage (no ToolInvocation),
-// otherwise the registered tool name.
+// `AGGREGATE_TOOL_KEY` for the synthetic whole-product total, otherwise the
+// registered tool name.
 export const CreditUsageGroupDTOSchema = z.object({
   toolKey: z.string(),
   displayName: z.string(),
@@ -114,6 +134,7 @@ export type CreditUsageEntryDTO = z.infer<typeof CreditUsageEntryDTOSchema>;
 
 export const ListCreditUsageEntriesQuerySchema = z.object({
   tool: z.string(),
+  period: UsagePeriodSchema.optional().default("all"),
 });
 export type ListCreditUsageEntriesQuery = z.infer<typeof ListCreditUsageEntriesQuerySchema>;
 
@@ -121,3 +142,49 @@ export const ListCreditUsageEntriesResponseSchema = z.object({
   entries: z.array(CreditUsageEntryDTOSchema),
 });
 export type ListCreditUsageEntriesResponse = z.infer<typeof ListCreditUsageEntriesResponseSchema>;
+
+// S7 — per-chat netted usage for `GET /api/v1/me/credits/usage-entries-by-chat`
+// (2026-08-29). Only the `AGGREGATE_TOOL_KEY` ("VyomFlow") group in the
+// Detailed View renders this shape instead of CreditUsageEntryDTOSchema —
+// selecting the whole-product total and then still seeing per-run rows
+// scoped to no particular tool was the confusing signal being fixed;
+// grouping by chat instead answers "where did my credits actually go."
+// `amount` nets every CAPTURE/USAGE row (across every tool and bare-LLM
+// usage) for that chat, mirroring CreditUsageEntryDTOSchema's per-run net.
+export const CreditUsageChatEntryDTOSchema = z.object({
+  chatId: z.string(),
+  chatTitle: z.string(),
+  amount: z.string(),
+  timestamp: z.string(),
+});
+export type CreditUsageChatEntryDTO = z.infer<typeof CreditUsageChatEntryDTOSchema>;
+
+export const ListCreditUsageChatEntriesQuerySchema = UsagePeriodQuerySchema;
+export type ListCreditUsageChatEntriesQuery = z.infer<typeof ListCreditUsageChatEntriesQuerySchema>;
+
+export const ListCreditUsageChatEntriesResponseSchema = z.object({
+  entries: z.array(CreditUsageChatEntryDTOSchema),
+});
+export type ListCreditUsageChatEntriesResponse = z.infer<typeof ListCreditUsageChatEntriesResponseSchema>;
+
+// S7 — chat-scoped run breakdown for `GET
+// /api/v1/me/credits/ledger/chat/[chatId]` (2026-08-29). Backs the
+// "VyomFlow" aggregate row's Details action: since that row nets a whole
+// chat's spend across every tool/run, there's no single runId for the
+// existing `CreditRunStepsDTOSchema` modal to key off of — this lists one
+// row per (tool, run) within the chat instead, mirroring that modal's
+// Step/Timestamp/Cost table shape at the run level rather than the raw-
+// ledger-row level.
+export const CreditChatRunEntryDTOSchema = z.object({
+  runId: z.string(),
+  toolName: z.string().nullable(),
+  amount: z.string(),
+  timestamp: z.string(),
+});
+export type CreditChatRunEntryDTO = z.infer<typeof CreditChatRunEntryDTOSchema>;
+
+export const CreditChatRunsDTOSchema = z.object({
+  chatTitle: z.string().nullable(),
+  items: z.array(CreditChatRunEntryDTOSchema),
+});
+export type CreditChatRunsDTO = z.infer<typeof CreditChatRunsDTOSchema>;

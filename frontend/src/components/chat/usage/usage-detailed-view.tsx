@@ -2,7 +2,14 @@
 
 import { formatCredits } from "@/lib/format";
 import { UsageEntryList } from "@/components/chat/usage/usage-entry-list";
-import type { CreditUsageEntryDTO, CreditUsageGroupDTO } from "@/contracts/credits";
+import { UsageChatBreakdownList } from "@/components/chat/usage/usage-chat-breakdown-list";
+import {
+  AGGREGATE_TOOL_KEY,
+  type CreditUsageChatEntryDTO,
+  type CreditUsageEntryDTO,
+  type CreditUsageGroupDTO,
+  type UsagePeriod,
+} from "@/contracts/credits";
 
 /**
  * Detailed View tab (credits.md "/usage full dashboard": a dropdown of
@@ -25,6 +32,10 @@ import type { CreditUsageEntryDTO, CreditUsageGroupDTO } from "@/contracts/credi
  * (netted CAPTURE/USAGE total), not one row per raw ledger entry, so its
  * row count actually matches `selectedGroup.records` above it (credits.md
  * "`/usage` — Action/'View details' drill-down gap", netted-rows fold-in).
+ * `groups[0]` is always the synthetic `AGGREGATE_TOOL_KEY` ("VyomFlow")
+ * group (2026-08-29 UX fix — see getCreditUsageSummary), which renders
+ * `UsageChatBreakdownList` instead: one row per chat across every tool
+ * combined, since there's no single tool bucket to net runs within.
  */
 export function UsageDetailedView({
   groups,
@@ -32,12 +43,16 @@ export function UsageDetailedView({
   selectedTool,
   onSelectTool,
   onViewDetails,
+  onViewChatDetails,
+  period,
 }: {
   groups: CreditUsageGroupDTO[] | undefined;
   isLoading: boolean;
   selectedTool: string | undefined;
   onSelectTool: (toolKey: string) => void;
   onViewDetails: (entry: CreditUsageEntryDTO, group: CreditUsageGroupDTO) => void;
+  onViewChatDetails: (entry: CreditUsageChatEntryDTO) => void;
+  period: UsagePeriod;
 }) {
   if (isLoading) return <p className="p-4 text-sm text-text-secondary">Loading…</p>;
   if (!groups || groups.length === 0) return <p className="p-4 text-sm text-text-secondary">No credit activity yet.</p>;
@@ -74,7 +89,11 @@ export function UsageDetailedView({
           </div>
           <span className="shrink-0 rounded-pill bg-foreground px-3 py-1 text-xs font-medium text-background">Debited</span>
         </div>
-        <UsageEntryList tool={selected} onViewDetails={(entry) => onViewDetails(entry, selectedGroup)} />
+        {selected === AGGREGATE_TOOL_KEY ? (
+          <UsageChatBreakdownList period={period} onViewDetails={onViewChatDetails} />
+        ) : (
+          <UsageEntryList tool={selected} period={period} onViewDetails={(entry) => onViewDetails(entry, selectedGroup)} />
+        )}
       </div>
     </div>
   );

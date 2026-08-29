@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import UsagePage from "@/app/(chat)/usage/page";
-import { useCreditUsageEntries, useCreditUsageSummary } from "@/hooks/use-credits";
+import { useCreditLedgerByChat, useCreditUsageEntries, useCreditUsageEntriesByChat, useCreditUsageSummary } from "@/hooks/use-credits";
 import type { CreditUsageEntryDTO, CreditUsageSummaryDTO } from "@/contracts/credits";
 
 // Fix 3 — /usage rebuilt as a real tool-grouped dashboard
@@ -14,6 +14,8 @@ vi.mock("@/hooks/use-credits", () => ({
   useCreditUsageSummary: vi.fn(),
   useCreditUsageEntries: vi.fn(),
   useCreditLedgerByRun: vi.fn(),
+  useCreditUsageEntriesByChat: vi.fn(),
+  useCreditLedgerByChat: vi.fn(),
 }));
 
 // "Usage details" modal uses a real base-ui Dialog — not safely renderable
@@ -25,6 +27,13 @@ vi.mock("@/hooks/use-credits", () => ({
 vi.mock("@/components/chat/usage/usage-details-dialog", () => ({
   UsageDetailsDialog: ({ record }: { record: { entry: { runId: string } } | null }) =>
     record ? <div data-testid="usage-details-dialog-stub">{record.entry.runId}</div> : null,
+}));
+
+// Same reasoning as UsageDetailsDialog above — a real base-ui Dialog, not
+// safely renderable in this workspace's jsdom.
+vi.mock("@/components/chat/usage/usage-chat-details-dialog", () => ({
+  UsageChatDetailsDialog: ({ entry }: { entry: { chatId: string } | null }) =>
+    entry ? <div data-testid="usage-chat-details-dialog-stub">{entry.chatId}</div> : null,
 }));
 
 function summary(overrides: Partial<CreditUsageSummaryDTO> = {}): CreditUsageSummaryDTO {
@@ -67,6 +76,22 @@ function mockEntries(entries: CreditUsageEntryDTO[]) {
     isError: false,
   } as unknown as ReturnType<typeof useCreditUsageEntries>);
 }
+
+// None of this file's fixtures select the "VyomFlow" aggregate group, so
+// UsageChatBreakdownList never actually renders its data here — but
+// UsageChatDetailsDialog is always mounted in UsagePage's JSX (it just
+// renders nothing while `entry` is null), so its hook still needs a stable
+// default return, same reasoning as the other two hooks above.
+vi.mocked(useCreditUsageEntriesByChat).mockReturnValue({
+  data: { entries: [] },
+  isLoading: false,
+  isError: false,
+} as unknown as ReturnType<typeof useCreditUsageEntriesByChat>);
+vi.mocked(useCreditLedgerByChat).mockReturnValue({
+  data: undefined,
+  isLoading: false,
+  isError: false,
+} as unknown as ReturnType<typeof useCreditLedgerByChat>);
 
 describe("UsagePage — header + stat cards (real computed values, not fabricated)", () => {
   it("renders the header and the real aggregate totals from the summary endpoint", () => {
@@ -165,6 +190,19 @@ describe("UsagePage — Detailed View tab filters correctly", () => {
 
     expect(screen.getByText("Detailed records")).toBeInTheDocument();
     expect(screen.getByText("Select a usage category, then open a record to inspect step costs.")).toBeInTheDocument();
+  });
+});
+
+describe("UsagePage — period filter (2026-08-29 'select and change period')", () => {
+  it("renders the period select and re-fetches the summary with the newly selected period", () => {
+    mockSummary(summary());
+    mockEntries([]);
+    render(<UsagePage />);
+
+    const periodSelect = screen.getByRole("combobox", { name: /select period/i });
+    fireEvent.change(periodSelect, { target: { value: "90d" } });
+
+    expect(vi.mocked(useCreditUsageSummary).mock.calls.some((call) => call[0] === "90d")).toBe(true);
   });
 });
 

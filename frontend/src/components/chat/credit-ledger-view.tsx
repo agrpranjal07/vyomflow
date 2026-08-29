@@ -32,7 +32,7 @@ export const KIND_LABELS: Record<CreditLedgerEntryDTO["kind"], string> = {
 // server-side import path into that file, so this is a deliberate parallel
 // copy of the same mapping, not a duplicated concept invented independently.
 export function toolDisplayName(toolName: string | null): string {
-  if (toolName === null) return "VyomFlow";
+  if (toolName === null) return "AI Reasoning";
   switch (toolName) {
     case CROP_IMAGE_TOOL_NAME:
       return "AI Crop Image";

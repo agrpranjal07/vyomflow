@@ -7,7 +7,15 @@ import { UsageTabs, type UsageTab } from "@/components/chat/usage/usage-tabs";
 import { UsageOverviewTable } from "@/components/chat/usage/usage-overview-table";
 import { UsageDetailedView } from "@/components/chat/usage/usage-detailed-view";
 import { UsageDetailsDialog, type UsageDetailsRecord } from "@/components/chat/usage/usage-details-dialog";
-import type { CreditUsageEntryDTO, CreditUsageGroupDTO } from "@/contracts/credits";
+import { UsageChatDetailsDialog } from "@/components/chat/usage/usage-chat-details-dialog";
+import { UsagePeriodSelect } from "@/components/chat/usage/usage-period-select";
+import {
+  AGGREGATE_TOOL_KEY,
+  type CreditUsageChatEntryDTO,
+  type CreditUsageEntryDTO,
+  type CreditUsageGroupDTO,
+  type UsagePeriod,
+} from "@/contracts/credits";
 
 /**
  * Standalone /usage page (reference: the reference product's /usage page, "AI Credits
@@ -20,10 +28,13 @@ import type { CreditUsageEntryDTO, CreditUsageGroupDTO } from "@/contracts/credi
  * (30px/700 title, 18px/400 text-secondary subtitle) and the stat-card/
  * table/tab class systems are DOM/computed-style-verified against the live
  * reference (reference-usage-page-desktop.md), mapped onto this app's
- * existing tokens. `Show`/`Period` filter dropdowns and the "AI Credit
- * Adjustment" row are deliberately omitted — no backing filter modes or
- * admin-adjustment concept exist in this project (standing anti-fabrication
- * decision, see .claude/evidence/credits.md).
+ * existing tokens. The "AI Credit Adjustment" row is deliberately omitted —
+ * no admin-adjustment concept exists in this project (standing
+ * anti-fabrication decision, see .claude/evidence/credits.md). The `Period`
+ * filter (2026-08-29) is real, unlike the reference's `Show` filter (still
+ * omitted — no backing filter mode exists): `?period=` scopes the summary/
+ * entries endpoints to a real rolling `createdAt` window, not a fabricated
+ * billing-period concept.
  *
  * `selectedTool` is owned here (not inside UsageDetailedView) so Overview's
  * "View details" action (credits.md "`/usage` — Action/'View details'
@@ -32,10 +43,12 @@ import type { CreditUsageEntryDTO, CreditUsageGroupDTO } from "@/contracts/credi
  * modal is open for.
  */
 export default function UsagePage() {
-  const { data, isLoading, isError } = useCreditUsageSummary();
+  const [period, setPeriod] = useState<UsagePeriod>("all");
+  const { data, isLoading, isError } = useCreditUsageSummary(period);
   const [tab, setTab] = useState<UsageTab>("overview");
   const [selectedTool, setSelectedTool] = useState<string | undefined>(undefined);
   const [detailsRecord, setDetailsRecord] = useState<UsageDetailsRecord | null>(null);
+  const [chatDetailsEntry, setChatDetailsEntry] = useState<CreditUsageChatEntryDTO | null>(null);
 
   function handleOverviewViewDetails(toolKey: string) {
     setSelectedTool(toolKey);
@@ -53,8 +66,13 @@ export default function UsagePage() {
           which read visibly narrower than the reference's own full-width
           dashboard layout. */}
       <div className="mx-auto w-full max-w-[1472px]">
-        <h1 className="text-[30px] font-bold leading-9 text-text-primary">AI Credits Overview</h1>
-        <p className="mt-1.5 text-lg leading-7 text-text-secondary">Track your AI usage and optimize credit spend</p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-[30px] font-bold leading-9 text-text-primary">AI Credits Overview</h1>
+            <p className="mt-1.5 text-lg leading-7 text-text-secondary">Track your AI usage and optimize credit spend</p>
+          </div>
+          <UsagePeriodSelect value={period} onChange={setPeriod} />
+        </div>
 
         <div className="mt-6">
           <UsageStatCards data={data} isLoading={isLoading} />
@@ -67,7 +85,13 @@ export default function UsagePage() {
         <div className="mt-4">
           {tab === "overview" ? (
             <UsageOverviewTable
-              groups={data?.groups}
+              // The "VyomFlow" aggregate (groups[0], 2026-08-29) is the sum of
+              // every row below it — Overview is a per-category breakdown, so
+              // showing the total as a peer row would read as a real category
+              // and double the visible total. The stat cards above already
+              // show the true cross-tool total; the aggregate is only a
+              // *selectable* view in the Detailed tab's dropdown.
+              groups={data?.groups?.filter((group) => group.toolKey !== AGGREGATE_TOOL_KEY)}
               isLoading={isLoading}
               isError={isError}
               onViewDetails={handleOverviewViewDetails}
@@ -79,12 +103,15 @@ export default function UsagePage() {
               selectedTool={selectedTool}
               onSelectTool={setSelectedTool}
               onViewDetails={handleRowViewDetails}
+              onViewChatDetails={setChatDetailsEntry}
+              period={period}
             />
           )}
         </div>
       </div>
 
       <UsageDetailsDialog record={detailsRecord} onOpenChange={(open) => !open && setDetailsRecord(null)} />
+      <UsageChatDetailsDialog entry={chatDetailsEntry} onOpenChange={(open) => !open && setChatDetailsEntry(null)} />
     </div>
   );
 }

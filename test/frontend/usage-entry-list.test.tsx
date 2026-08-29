@@ -35,19 +35,19 @@ function mockEntries(
 describe("UsageEntryList — loading/empty/error states", () => {
   it("renders a loading state", () => {
     mockEntries(undefined, { isLoading: true });
-    render(<UsageEntryList tool="none" onViewDetails={vi.fn()} />);
+    render(<UsageEntryList tool="none" period="all" onViewDetails={vi.fn()} />);
     expect(screen.getByText("Loading…")).toBeInTheDocument();
   });
 
   it("renders an empty state with no fabricated rows", () => {
     mockEntries({ entries: [] });
-    render(<UsageEntryList tool="none" onViewDetails={vi.fn()} />);
+    render(<UsageEntryList tool="none" period="all" onViewDetails={vi.fn()} />);
     expect(screen.getByText("No credit activity yet.")).toBeInTheDocument();
   });
 
   it("renders an error state, not a crash", () => {
     mockEntries(undefined, { isError: true });
-    render(<UsageEntryList tool="none" onViewDetails={vi.fn()} />);
+    render(<UsageEntryList tool="none" period="all" onViewDetails={vi.fn()} />);
     expect(screen.getByText("Couldn't load usage records.")).toBeInTheDocument();
   });
 });
@@ -55,7 +55,7 @@ describe("UsageEntryList — loading/empty/error states", () => {
 describe("UsageEntryList — netted rows: one per run, real amount/timestamp", () => {
   it("renders the column header row", () => {
     mockEntries({ entries: [entry()] });
-    render(<UsageEntryList tool="none" onViewDetails={vi.fn()} />);
+    render(<UsageEntryList tool="none" period="all" onViewDetails={vi.fn()} />);
     expect(screen.getByRole("columnheader", { name: "Credits Used" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Timestamp" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Details" })).toBeInTheDocument();
@@ -68,7 +68,7 @@ describe("UsageEntryList — netted rows: one per run, real amount/timestamp", (
         entry({ runId: "run_b", amount: "0.1100" }),
       ],
     });
-    render(<UsageEntryList tool="none" onViewDetails={vi.fn()} />);
+    render(<UsageEntryList tool="none" period="all" onViewDetails={vi.fn()} />);
     expect(screen.getByText("0.29M")).toBeInTheDocument();
     expect(screen.getByText("0.11M")).toBeInTheDocument();
     expect(screen.getAllByRole("row")).toHaveLength(3); // header + 2 entries
@@ -77,7 +77,7 @@ describe("UsageEntryList — netted rows: one per run, real amount/timestamp", (
   it("calls onViewDetails with the clicked entry", () => {
     const onViewDetails = vi.fn();
     mockEntries({ entries: [entry({ runId: "run_click" })] });
-    render(<UsageEntryList tool="none" onViewDetails={onViewDetails} />);
+    render(<UsageEntryList tool="none" period="all" onViewDetails={onViewDetails} />);
     fireEvent.click(screen.getByRole("button", { name: /view details/i }));
     expect(onViewDetails).toHaveBeenCalledWith(expect.objectContaining({ runId: "run_click" }));
   });
