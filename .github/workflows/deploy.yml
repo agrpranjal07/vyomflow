@@ -22,7 +22,6 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
       migrations: ${{ steps.filter.outputs.migrations }}
-      trigger: ${{ steps.filter.outputs.trigger }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -35,12 +34,6 @@ jobs:
               - '.github/workflows/deploy.yml'
             migrations:
               - 'backend/prisma/migrations/**'
-              - 'backend/prisma/schema.prisma'
-            trigger:
-              - 'backend/src/**'
-              - 'backend/agent-skills/**'
-              - 'backend/trigger.config.ts'
-              - 'backend/package.json'
               - 'backend/prisma/schema.prisma'
             frontend:
               - 'frontend/**'
@@ -75,46 +68,16 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL_DIRECT }}
 
-  deploy-trigger:
-    needs: [changes, migrate]
-    # always() so this still runs when `migrate` was skipped (no schema
-    # change), but never when it failed or was cancelled.
-    if: >-
-      always() &&
-      needs.migrate.result != 'failure' && needs.migrate.result != 'cancelled' &&
-      needs.changes.outputs.trigger == 'true'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.9
-      - uses: actions/setup-node@v4
-        with:
-          # Matches trigger.config.ts `runtime: "node-22"`.
-          node-version: "22"
-          cache: pnpm
-          cache-dependency-path: backend/pnpm-lock.yaml
-      # Required before deploy: the build extensions (tsconfigPathsExtension,
-      # prismaExtension, ffmpeg, additionalFiles) resolve from node_modules.
-      - run: pnpm install --frozen-lockfile
-        working-directory: backend
-      # CLI pinned to the installed @trigger.dev/sdk version, not @latest —
-      # a CLI/SDK major skew can silently change build-extension behaviour.
-      # TRIGGER_PROJECT_REF is required because trigger.config.ts reads it.
-      - run: npx --yes trigger.dev@4.5.12 deploy
-        working-directory: backend
-        env:
-          TRIGGER_ACCESS_TOKEN: ${{ secrets.TRIGGER_ACCESS_TOKEN }}
-          TRIGGER_PROJECT_REF: ${{ vars.TRIGGER_PROJECT_REF }}
+  # No separate Trigger.dev deploy job: Trigger.dev's own GitHub + Vercel
+  # dashboard integrations already redeploy tasks atomically whenever this
+  # job creates a Vercel deployment, and keep task versions in sync with the
+  # app build — running a second `trigger.dev deploy` here would race it.
 
   deploy-backend:
-    needs: [changes, migrate, deploy-trigger]
+    needs: [changes, migrate]
     if: >-
       always() &&
       needs.migrate.result != 'failure' && needs.migrate.result != 'cancelled' &&
-      needs.deploy-trigger.result != 'failure' && needs.deploy-trigger.result != 'cancelled' &&
       needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     environment: production
